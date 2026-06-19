@@ -1,0 +1,596 @@
+import { useState, useEffect } from 'react'
+import { useNavigate } from 'react-router-dom'
+import { useAuth } from '../context/AuthContext'
+import api from '../services/api'
+import SOSMap from '../components/SOSMap'
+import ChatBox from '../components/ChatBox'
+
+const GEO_OPTIONS = {
+  enableHighAccuracy: true,
+  timeout: 10000,
+  maximumAge: 0
+}
+
+function calculateDistance(lat1, lng1, lat2, lng2) {
+  const R = 6371
+  const dLat = (lat2 - lat1) * Math.PI / 180
+  const dLng = (lng2 - lng1) * Math.PI / 180
+  const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+    Math.sin(dLng / 2) * Math.sin(dLng / 2)
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
+  return R * c
+}
+
+const S = {
+  page: { minHeight: '100vh', background: '#0a0a0a', fontFamily: 'Oswald, sans-serif' },
+  nav: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '16px 48px', borderBottom: '1px solid #1c1c1c' },
+  logo: { color: '#fff', fontSize: '20px', letterSpacing: '6px', fontWeight: '600', textTransform: 'uppercase' },
+  navLinks: { display: 'flex', gap: '32px' },
+  navLink: { color: '#555', fontSize: '13px', letterSpacing: '3px', textTransform: 'uppercase', cursor: 'pointer' },
+  navActive: { color: '#fff', fontSize: '13px', letterSpacing: '3px', textTransform: 'uppercase', cursor: 'pointer' },
+  redBar: { height: '2px', background: 'linear-gradient(90deg, #0a0a0a, #cc0000, #0a0a0a)' },
+  body: { display: 'flex', minHeight: 'calc(100vh - 57px)' },
+  left: { flex: 1, padding: '60px 48px', borderRight: '1px solid #1c1c1c', display: 'flex', flexDirection: 'column', justifyContent: 'center' },
+  right: { flex: 1, padding: '60px 48px', display: 'flex', flexDirection: 'column', justifyContent: 'center' },
+  tag: { fontSize: '11px', letterSpacing: '5px', color: '#cc0000', textTransform: 'uppercase', marginBottom: '16px' },
+  title: { fontSize: '52px', fontWeight: '700', color: '#fff', letterSpacing: '3px', textTransform: 'uppercase', lineHeight: '1.1', marginBottom: '16px' },
+  titleRed: { color: '#cc0000' },
+  desc: { fontSize: '14px', color: '#555', letterSpacing: '1px', lineHeight: '1.8', fontWeight: '300', maxWidth: '340px' },
+  label: { fontSize: '11px', letterSpacing: '3px', color: '#555', textTransform: 'uppercase', marginBottom: '8px' },
+  input: { background: '#111', border: '1px solid #222', color: '#fff', padding: '12px 16px', fontFamily: 'Oswald, sans-serif', fontSize: '14px', letterSpacing: '1px', borderRadius: '3px', width: '100%', outline: 'none', marginBottom: '20px' },
+  btnRed: { width: '100%', padding: '14px', background: '#cc0000', border: 'none', color: '#fff', fontFamily: 'Oswald, sans-serif', fontSize: '13px', letterSpacing: '4px', textTransform: 'uppercase', cursor: 'pointer', borderRadius: '3px', marginBottom: '12px' },
+  btnOut: { width: '100%', padding: '14px', background: 'transparent', border: '1px solid #222', color: '#555', fontFamily: 'Oswald, sans-serif', fontSize: '13px', letterSpacing: '4px', textTransform: 'uppercase', cursor: 'pointer', borderRadius: '3px', marginBottom: '20px' },
+  btnGreen: { width: '100%', padding: '14px', background: '#006622', border: '1px solid #00cc44', color: '#00cc44', fontFamily: 'Oswald, sans-serif', fontSize: '13px', letterSpacing: '4px', textTransform: 'uppercase', cursor: 'pointer', borderRadius: '3px', marginBottom: '12px' },
+  error: { color: '#cc0000', fontSize: '12px', letterSpacing: '2px', marginBottom: '12px' },
+  success: { color: '#00cc44', fontSize: '12px', letterSpacing: '2px', marginBottom: '12px' },
+  divider: { height: '1px', background: '#1c1c1c', margin: '24px 0' },
+}
+
+// ─── LOGIN FORM ───────────────────────────────────────────────
+function LoginForm() {
+  const { login } = useAuth()
+  const [phone, setPhone] = useState('')
+  const [otp, setOtp] = useState('')
+  const [name, setName] = useState('')
+  const [step, setStep] = useState('phone')
+  const [isNewUser, setIsNewUser] = useState(false)
+  const [error, setError] = useState('')
+  const [success, setSuccess] = useState('')
+  const [loading, setLoading] = useState(false)
+
+  const sendOTP = async () => {
+    if (!phone) return setError('Phone number is required')
+    setLoading(true)
+    setError('')
+    try {
+      const res = await api.post('/auth/send-otp', { phone })
+      setSuccess(`OTP sent! ${res.data.otp ? `(Dev mode OTP: ${res.data.otp})` : ''}`)
+      setStep('otp')
+    } catch (err) {
+      setError(err.response?.data?.message || 'Failed to send OTP')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const verifyOTP = async () => {
+    if (!otp) return setError('Enter OTP')
+    if (isNewUser && !name) {
+      return setError('Please enter your name to complete registration')
+    }
+    setLoading(true)
+    setError('')
+    try {
+      const res = await api.post('/auth/verify-otp', {
+        phone,
+        otp,
+        name: name || undefined,
+        role: 'volunteer'
+      })
+      if (res.data.isNewUser && !name) {
+        setIsNewUser(true)
+        setLoading(false)
+        return setError('Please enter your name above to complete registration')
+      }
+      login(res.data.user, res.data.token)
+    } catch (err) {
+      if (err.response?.data?.isNewUser) {
+        setIsNewUser(true)
+        setError('Please enter your name above to complete registration')
+      } else {
+        setError(err.response?.data?.message || 'Invalid OTP')
+      }
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  return (
+    <div>
+      <div style={S.tag}>Volunteer Access</div>
+      <div style={S.title}>
+        Ready to<br /><span style={S.titleRed}>Help.</span>
+      </div>
+      <div style={S.desc}>
+        Register as a volunteer to receive nearby SOS alerts and help people in emergencies.
+      </div>
+      <div style={S.divider} />
+
+      {error && <div style={S.error}>{error}</div>}
+      {success && <div style={S.success}>{success}</div>}
+
+      {step === 'phone' && (
+        <>
+          <div style={S.label}>Phone Number</div>
+          <input
+            style={S.input}
+            placeholder="Enter your phone number"
+            value={phone}
+            onChange={e => setPhone(e.target.value)}
+            onKeyDown={e => e.key === 'Enter' && sendOTP()}
+          />
+          <button style={S.btnRed} onClick={sendOTP} disabled={loading}>
+            {loading ? 'Sending...' : 'Send OTP'}
+          </button>
+        </>
+      )}
+
+      {step === 'otp' && (
+        <>
+          <div style={S.label}>Phone Number</div>
+          <input style={{ ...S.input, color: '#555' }} value={phone} readOnly />
+
+          {isNewUser && (
+            <>
+              <div style={S.label}>Your Name</div>
+              <input
+                style={S.input}
+                placeholder="Enter your full name"
+                value={name}
+                onChange={e => setName(e.target.value)}
+                autoFocus
+              />
+            </>
+          )}
+
+          <div style={S.label}>Enter OTP</div>
+          <input
+            style={S.input}
+            placeholder="6-digit OTP"
+            value={otp}
+            onChange={e => setOtp(e.target.value)}
+            maxLength={6}
+            onKeyDown={e => e.key === 'Enter' && verifyOTP()}
+          />
+
+          <button style={S.btnRed} onClick={verifyOTP} disabled={loading}>
+            {loading ? 'Verifying...' : isNewUser ? 'Register & Enter' : 'Sign In'}
+          </button>
+          <button
+            style={S.btnOut}
+            onClick={() => {
+              setStep('phone')
+              setError('')
+              setSuccess('')
+              setIsNewUser(false)
+              setOtp('')
+              setName('')
+            }}
+          >
+            Change Number
+          </button>
+        </>
+      )}
+    </div>
+  )
+}
+
+// ─── VOLUNTEER DASHBOARD ──────────────────────────────────────
+function VolunteerDashboard() {
+  const { user, logout, socket } = useAuth()
+  const [sosRequests, setSosRequests] = useState([])
+  const [activeSOS, setActiveSOS] = useState(null)
+  const [history, setHistory] = useState([])
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState('')
+  const [success, setSuccess] = useState('')
+  const [victimLocation, setVictimLocation] = useState(null)
+  const [volunteerLocation, setVolunteerLocation] = useState(null)
+
+  useEffect(() => {
+    navigator.geolocation.getCurrentPosition(pos => {
+      const lat = pos.coords.latitude
+      const lng = pos.coords.longitude
+      setVolunteerLocation({ lat, lng })
+      api.put('/volunteers/location', { latitude: lat, longitude: lng }).catch(() => {})
+
+      api.get(`/sos?latitude=${lat}&longitude=${lng}`)
+        .then(res => setSosRequests(res.data.requests || []))
+        .catch(() => {})
+    }, (err) => {
+      console.error('Location error:', err)
+    }, GEO_OPTIONS)
+
+    api.get('/sos')
+      .then(res => {
+        const accepted = res.data.requests?.find(r =>
+          r.status === 'accepted' || r.status === 'responding'
+        )
+        if (accepted) {
+          setActiveSOS(accepted)
+          if (socket) socket.emit('join_sos_room', accepted._id)
+          if (accepted.victimId?.location?.coordinates) {
+            setVictimLocation({
+              lat: accepted.victimId.location.coordinates[1],
+              lng: accepted.victimId.location.coordinates[0]
+            })
+          }
+        }
+      })
+      .catch(() => {})
+
+    api.get('/sos/history')
+      .then(res => setHistory(res.data.history || []))
+      .catch(() => {})
+
+    const tracker = setInterval(() => {
+      navigator.geolocation.getCurrentPosition(pos => {
+        const lat = pos.coords.latitude
+        const lng = pos.coords.longitude
+        setVolunteerLocation({ lat, lng })
+        api.put('/volunteers/location', { latitude: lat, longitude: lng }).catch(() => {})
+      }, (err) => {
+        console.error('Location error:', err)
+      }, GEO_OPTIONS)
+    }, 10000)
+
+    window._volunteerTracker = tracker
+
+    if (socket) {
+      socket.on('new_sos_request', (data) => {
+        setSuccess(`🚨 New SOS nearby — ${data.category.replace('_', ' ')} by ${data.victimName}`)
+        setSosRequests(prev => [{
+          _id: data.sosId,
+          category: data.category,
+          description: data.description,
+          victimId: { name: data.victimName },
+          location: data.location,
+          status: 'pending',
+          createdAt: data.createdAt
+        }, ...prev])
+      })
+
+      socket.on('sos_cancelled', (data) => {
+        setSosRequests(prev => prev.filter(r => r._id !== data.sosId))
+        if (activeSOS?._id === data.sosId) {
+          setActiveSOS(null)
+          setError('Victim cancelled the SOS request.')
+        }
+      })
+
+      socket.on('victim_location_update', (data) => {
+        setVictimLocation(data.location)
+      })
+    }
+
+    return () => {
+      clearInterval(tracker)
+      window._volunteerTracker = null
+      if (socket) {
+        socket.off('new_sos_request')
+        socket.off('sos_cancelled')
+        socket.off('victim_location_update')
+      }
+    }
+  }, [socket])
+
+  const acceptSOS = async (sosId) => {
+    setLoading(true)
+    setError('')
+    try {
+      const res = await api.put(`/sos/${sosId}/accept`)
+      setActiveSOS(res.data.sos)
+      setSosRequests([])
+      setSuccess('SOS accepted. Navigate to victim location.')
+      if (socket) socket.emit('join_sos_room', sosId)
+      const sos = res.data.sos
+      if (sos.location?.coordinates) {
+        setVictimLocation({
+          lat: sos.location.coordinates[1],
+          lng: sos.location.coordinates[0]
+        })
+      }
+    } catch (err) {
+      setError(err.response?.data?.message || 'Failed to accept SOS')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const completeSOS = async () => {
+    if (!activeSOS) return
+    setLoading(true)
+    try {
+      await api.put(`/sos/${activeSOS._id}/complete`)
+      if (socket) socket.emit('leave_sos_room', activeSOS._id)
+      setActiveSOS(null)
+      setVictimLocation(null)
+      setSuccess('Rescue completed. Great work!')
+      api.get('/sos/history')
+        .then(res => setHistory(res.data.history || []))
+        .catch(() => {})
+    } catch (err) {
+      setError(err.response?.data?.message || 'Failed to complete')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const refreshRequests = () => {
+    if (!volunteerLocation) return
+    api.get(`/sos?latitude=${volunteerLocation.lat}&longitude=${volunteerLocation.lng}`)
+      .then(res => setSosRequests(res.data.requests || []))
+      .catch(() => {})
+  }
+
+  const getCategoryColor = (severity) => {
+    if (severity === 'critical') return '#cc0000'
+    if (severity === 'high') return '#ff6600'
+    if (severity === 'medium') return '#ffaa00'
+    return '#888'
+  }
+
+  return (
+    <div style={{ display: 'flex', minHeight: 'calc(100vh - 57px)' }}>
+      <div style={{ flex: 1, padding: '48px', borderRight: '1px solid #1c1c1c', overflowY: 'auto' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '32px' }}>
+          <div>
+            <div style={S.tag}>Volunteer Dashboard</div>
+            <div style={{ fontSize: '28px', fontWeight: '600', color: '#fff', letterSpacing: '3px', textTransform: 'uppercase' }}>
+              Welcome, {user.name}
+            </div>
+          </div>
+          <button
+            onClick={logout}
+            style={{ padding: '8px 20px', background: 'transparent', border: '1px solid #222', color: '#555', fontFamily: 'Oswald, sans-serif', fontSize: '12px', letterSpacing: '3px', textTransform: 'uppercase', cursor: 'pointer', borderRadius: '3px' }}
+          >
+            Logout
+          </button>
+        </div>
+
+        {error && <div style={S.error}>{error}</div>}
+        {success && <div style={S.success}>{success}</div>}
+
+        {!activeSOS ? (
+          <>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+              <div style={S.tag}>Nearby SOS Requests</div>
+              <button
+                onClick={refreshRequests}
+                style={{ padding: '6px 16px', background: 'transparent', border: '1px solid #222', color: '#555', fontFamily: 'Oswald, sans-serif', fontSize: '11px', letterSpacing: '2px', textTransform: 'uppercase', cursor: 'pointer', borderRadius: '3px' }}
+              >
+                Refresh
+              </button>
+            </div>
+
+            {sosRequests.length === 0 ? (
+              <div style={{ background: '#111', border: '1px solid #1c1c1c', borderRadius: '4px', padding: '32px', textAlign: 'center', marginBottom: '24px' }}>
+                <div style={{ fontSize: '12px', color: '#333', letterSpacing: '3px', textTransform: 'uppercase' }}>
+                  No nearby SOS requests
+                </div>
+                <div style={{ fontSize: '11px', color: '#222', letterSpacing: '2px', marginTop: '8px' }}>
+                  You will be notified when someone needs help nearby
+                </div>
+              </div>
+            ) : (
+              sosRequests.map((sos) => (
+                <div key={sos._id} style={{ background: '#111', border: '1px solid #1c1c1c', borderRadius: '4px', padding: '20px', marginBottom: '12px' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '12px' }}>
+                    <div>
+                      <div style={{ fontSize: '16px', color: '#fff', letterSpacing: '2px', textTransform: 'uppercase', marginBottom: '4px' }}>
+                        {sos.category.replace('_', ' ')}
+                      </div>
+                      <div style={{ fontSize: '11px', color: '#444', letterSpacing: '2px' }}>
+                        By {sos.victimId?.name || 'Unknown'} • {new Date(sos.createdAt).toLocaleTimeString()}
+                      </div>
+                    </div>
+                    <div style={{ fontSize: '11px', color: getCategoryColor(sos.severity), letterSpacing: '2px', textTransform: 'uppercase', border: `1px solid ${getCategoryColor(sos.severity)}`, padding: '4px 10px', borderRadius: '3px' }}>
+                      {sos.severity || 'medium'}
+                    </div>
+                  </div>
+
+                  {sos.description && (
+                    <div style={{ fontSize: '12px', color: '#555', letterSpacing: '1px', marginBottom: '12px', lineHeight: '1.6' }}>
+                      {sos.description}
+                    </div>
+                  )}
+
+                  {volunteerLocation && sos.location?.coordinates && (
+                    <div style={{ background: '#0a0a0a', border: '1px solid #1c1c1c', borderRadius: '3px', padding: '10px', marginBottom: '12px' }}>
+                      <div style={{ fontSize: '11px', color: '#555', letterSpacing: '2px', textTransform: 'uppercase', marginBottom: '4px' }}>
+                        Distance from you
+                      </div>
+                      <div style={{ fontSize: '20px', fontWeight: '600', color: '#cc0000', letterSpacing: '2px' }}>
+                        {calculateDistance(
+                          volunteerLocation.lat,
+                          volunteerLocation.lng,
+                          sos.location.coordinates[1],
+                          sos.location.coordinates[0]
+                        ).toFixed(2)} km away
+                      </div>
+                      <div style={{ fontSize: '11px', color: '#444', letterSpacing: '1px', marginTop: '4px' }}>
+                        📍 {sos.location.coordinates[1].toFixed(4)}, {sos.location.coordinates[0].toFixed(4)}
+                      </div>
+                    </div>
+                  )}
+
+                  {sos.aiAnalysis?.summary && (
+                    <div style={{ background: '#0d0d0d', border: '1px solid #1c1c1c', borderRadius: '3px', padding: '10px', marginBottom: '12px' }}>
+                      <div style={{ fontSize: '10px', color: '#cc0000', letterSpacing: '3px', textTransform: 'uppercase', marginBottom: '4px' }}>AI Summary</div>
+                      <div style={{ fontSize: '12px', color: '#555', letterSpacing: '1px', lineHeight: '1.6' }}>{sos.aiAnalysis.summary}</div>
+                    </div>
+                  )}
+
+                  <button
+                    onClick={() => acceptSOS(sos._id)}
+                    disabled={loading}
+                    style={S.btnGreen}
+                  >
+                    {loading ? 'Accepting...' : 'Accept & Respond'}
+                  </button>
+                </div>
+              ))
+            )}
+          </>
+        ) : (
+          <div>
+            <div style={{ background: '#001a00', border: '1px solid #00cc44', borderRadius: '4px', padding: '20px', marginBottom: '20px' }}>
+              <div style={{ fontSize: '11px', color: '#00cc44', letterSpacing: '4px', textTransform: 'uppercase', marginBottom: '8px' }}>
+                ● Responding — {activeSOS.category?.replace('_', ' ')}
+              </div>
+              <div style={{ fontSize: '13px', color: '#555', letterSpacing: '2px', textTransform: 'uppercase', marginBottom: '4px' }}>
+                Victim: {activeSOS.victimId?.name || 'Unknown'}
+              </div>
+              <div style={{ fontSize: '13px', color: '#555', letterSpacing: '2px', textTransform: 'uppercase', marginBottom: '16px' }}>
+                Status: {activeSOS.status}
+              </div>
+              <button
+                onClick={completeSOS}
+                disabled={loading}
+                style={S.btnGreen}
+              >
+                {loading ? 'Completing...' : 'Mark Rescue Complete'}
+              </button>
+            </div>
+
+            <div style={{ marginBottom: '20px' }}>
+              <div style={{ fontSize: '11px', color: '#555', letterSpacing: '3px', textTransform: 'uppercase', marginBottom: '8px' }}>
+                Navigation Map
+              </div>
+              <SOSMap
+                victimLocation={victimLocation}
+                volunteerLocation={volunteerLocation}
+                showRoute={true}
+              />
+            </div>
+
+            <div style={{ marginTop: '20px' }}>
+              <ChatBox
+                sosId={activeSOS._id}
+                receiverId={activeSOS.victimId?._id || activeSOS.victimId}
+              />
+            </div>
+          </div>
+        )}
+      </div>
+
+      <div style={{ flex: 1, padding: '48px', overflowY: 'auto' }}>
+        <div style={S.tag}>Rescue Log</div>
+        <div style={{ fontSize: '22px', fontWeight: '600', color: '#fff', letterSpacing: '3px', textTransform: 'uppercase', marginBottom: '8px' }}>
+          Rescue History
+        </div>
+        <div style={{ fontSize: '13px', color: '#cc0000', letterSpacing: '2px', marginBottom: '24px' }}>
+          {user.rescueCount || 0} Total Rescues
+        </div>
+
+        {history.length === 0 ? (
+          <div style={{ color: '#333', fontSize: '12px', letterSpacing: '3px', textTransform: 'uppercase', textAlign: 'center', marginTop: '60px', lineHeight: '2' }}>
+            No rescues yet.<br />Accept an SOS to get started.
+          </div>
+        ) : (
+          history.map((h, i) => (
+            <div key={i} style={{ background: '#111', border: '1px solid #1c1c1c', borderRadius: '4px', padding: '16px', marginBottom: '12px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <div style={{ fontSize: '15px', color: '#fff', letterSpacing: '2px', textTransform: 'uppercase' }}>
+                  {h.category.replace('_', ' ')}
+                </div>
+                <div style={{ fontSize: '11px', color: h.status === 'completed' ? '#00cc44' : '#666', letterSpacing: '2px', textTransform: 'uppercase' }}>
+                  {h.status}
+                </div>
+              </div>
+              <div style={{ fontSize: '11px', color: '#444', letterSpacing: '2px', marginTop: '4px' }}>
+                Victim: {h.victimId?.name || 'Unknown'}
+              </div>
+              <div style={{ fontSize: '11px', color: '#333', letterSpacing: '2px', marginTop: '4px' }}>
+                {new Date(h.createdAt).toLocaleString()}
+              </div>
+            </div>
+          ))
+        )}
+      </div>
+    </div>
+  )
+}
+
+// ─── MAIN VOLUNTEER PAGE ──────────────────────────────────────
+export default function Volunteer() {
+  const { user, loading } = useAuth()
+  const navigate = useNavigate()
+
+  if (loading) return (
+    <div style={{ minHeight: '100vh', background: '#0a0a0a', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+      <div style={{ color: '#cc0000', fontSize: '13px', letterSpacing: '4px', textTransform: 'uppercase' }}>Loading...</div>
+    </div>
+  )
+
+  if (user && user.role === 'victim') {
+    return (
+      <div style={{ minHeight: '100vh', background: '#0a0a0a', fontFamily: 'Oswald, sans-serif' }}>
+        <nav style={S.nav}>
+          <div style={S.logo}><span style={{ color: '#cc0000' }}>&#9675;</span> Emergency SOS</div>
+          <div style={S.navLinks}>
+            <span onClick={() => navigate('/')} style={S.navLink}>Home</span>
+            <span onClick={() => navigate('/victim')} style={S.navLink}>Victim</span>
+            <span style={S.navActive}>Volunteer</span>
+          </div>
+        </nav>
+        <div style={S.redBar} />
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', minHeight: 'calc(100vh - 57px)', textAlign: 'center', padding: '40px' }}>
+          <div style={{ fontSize: '11px', color: '#cc0000', letterSpacing: '5px', textTransform: 'uppercase', marginBottom: '16px' }}>Access Denied</div>
+          <div style={{ fontSize: '40px', fontWeight: '700', color: '#fff', letterSpacing: '3px', textTransform: 'uppercase', marginBottom: '16px' }}>
+            You're in an<br /><span style={{ color: '#cc0000' }}>Emergency.</span>
+          </div>
+          <div style={{ fontSize: '14px', color: '#555', letterSpacing: '2px', marginBottom: '32px' }}>
+            You can't help others while you need help yourself. Abort your SOS first.
+          </div>
+          <button
+            onClick={() => navigate('/victim')}
+            style={{ padding: '14px 40px', background: '#cc0000', border: 'none', color: '#fff', fontFamily: 'Oswald, sans-serif', fontSize: '13px', letterSpacing: '4px', textTransform: 'uppercase', cursor: 'pointer', borderRadius: '3px' }}
+          >
+            Back to My SOS
+          </button>
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <div style={S.page}>
+      <nav style={S.nav}>
+        <div style={S.logo}><span style={{ color: '#cc0000' }}>&#9675;</span> Emergency SOS</div>
+        <div style={S.navLinks}>
+          <span onClick={() => navigate('/')} style={S.navLink}>Home</span>
+          <span onClick={() => navigate('/victim')} style={S.navLink}>Victim</span>
+          <span style={S.navActive}>Volunteer</span>
+        </div>
+      </nav>
+      <div style={S.redBar} />
+
+      {!user ? (
+        <div style={S.body}>
+          <div style={S.left}>
+            <div style={S.tag}>Emergency SOS</div>
+            <div style={S.title}>I Want to<br /><span style={S.titleRed}>Help.</span></div>
+            <div style={S.desc}>Register as a volunteer to receive nearby SOS alerts and help people in emergencies near you.</div>
+          </div>
+          <div style={S.right}>
+            <LoginForm />
+          </div>
+        </div>
+      ) : (
+        <VolunteerDashboard />
+      )}
+    </div>
+  )
+}

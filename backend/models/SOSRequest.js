@@ -42,6 +42,10 @@ const sosRequestSchema = new mongoose.Schema({
     ref: 'User',
     default: null
   },
+  notifiedVolunteers: [{
+  type: mongoose.Schema.Types.ObjectId,
+  ref: 'User'
+}],
   aiAnalysis: {
     firstAid: [String],
     immediateActions: [String],
