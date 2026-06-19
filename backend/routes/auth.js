@@ -32,10 +32,10 @@ router.post('/send-otp', async (req, res, next) => {
     console.log(`OTP for ${phone}: ${otp}`);
 
     res.json({
-  success: true,
-  message: 'OTP sent successfully',
-  otp
-});
+      success: true,
+      message: 'OTP sent successfully',
+      ...(process.env.NODE_ENV === 'development' && { otp })
+    });
   } catch (error) {
     next(error);
   }
