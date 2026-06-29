@@ -6,13 +6,6 @@ A real-time emergency response system connecting victims with nearby volunteers,
 
 ---
 
-## 🌐 Live Demo
-
-- **Frontend:** [your-vercel-url.vercel.app](https://your-vercel-url.vercel.app)
-- **Backend API:** [your-railway-url.railway.app](https://your-railway-url.railway.app)
-
----
-
 ## ✨ Features
 
 ### For Victims
