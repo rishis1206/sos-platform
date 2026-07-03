@@ -1,47 +1,60 @@
-import { createContext, useContext, useState, useEffect, useRef } from 'react'
+import { useEffect, useState } from 'react'
 import { io } from 'socket.io-client'
-import api from '../services/api'
+import api, { API_ORIGIN } from '../services/api'
+import { AuthContext } from './useAuth'
 
-const AuthContext = createContext()
+const SOCKET_URL = import.meta.env.VITE_SOCKET_URL || API_ORIGIN
 
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(null)
   const [token, setToken] = useState(localStorage.getItem('token'))
-  const [loading, setLoading] = useState(true)
-  const socketRef = useRef(null)
+  const [loading, setLoading] = useState(() => Boolean(localStorage.getItem('token')))
+  const [socket, setSocket] = useState(null)
 
   useEffect(() => {
-    if (token) {
-      api.get('/auth/me')
-        .then(res => setUser(res.data.user))
-        .catch(() => logout())
-        .finally(() => setLoading(false))
-    } else {
-      setLoading(false)
+    if (!token) return
+
+    let cancelled = false
+
+    api.get('/auth/me')
+      .then(res => {
+        if (!cancelled) setUser(res.data.user)
+      })
+      .catch(() => {
+        localStorage.removeItem('token')
+        if (!cancelled) {
+          setToken(null)
+          setUser(null)
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false)
+      })
+
+    return () => {
+      cancelled = true
     }
   }, [token])
 
-  // Connect socket when user logs in
   useEffect(() => {
-    if (user && token) {
-      const socket = io('http://localhost:5000', {
-        auth: { token }
-      })
+    if (!user || !token) return
 
-      socket.on('connect', () => {
-        console.log('🔌 Socket connected')
-      })
+    const nextSocket = io(SOCKET_URL, {
+      auth: { token }
+    })
 
-      socket.on('disconnect', () => {
-        console.log('🔌 Socket disconnected')
-      })
+    nextSocket.on('connect', () => {
+      setSocket(nextSocket)
+      console.log('Socket connected')
+    })
 
-      socketRef.current = socket
+    nextSocket.on('disconnect', () => {
+      setSocket(null)
+      console.log('Socket disconnected')
+    })
 
-      return () => {
-        socket.disconnect()
-        socketRef.current = null
-      }
+    return () => {
+      nextSocket.disconnect()
     }
   }, [user, token])
 
@@ -49,23 +62,20 @@ export function AuthProvider({ children }) {
     localStorage.setItem('token', userToken)
     setToken(userToken)
     setUser(userData)
+    setLoading(false)
   }
 
   const logout = () => {
     localStorage.removeItem('token')
     setToken(null)
     setUser(null)
-    if (socketRef.current) {
-      socketRef.current.disconnect()
-      socketRef.current = null
-    }
+    setLoading(false)
+    socket?.disconnect()
   }
 
   return (
-    <AuthContext.Provider value={{ user, token, login, logout, loading, socket: socketRef.current }}>
+    <AuthContext.Provider value={{ user, token, login, logout, loading, socket }}>
       {children}
     </AuthContext.Provider>
   )
 }
-
-export const useAuth = () => useContext(AuthContext)

@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { useAuth } from '../context/AuthContext'
+import { useAuth } from '../context/useAuth'
 import api from '../services/api'
 import SOSMap from '../components/SOSMap'
 import ChatBox from '../components/ChatBox'
@@ -263,10 +263,11 @@ function VolunteerDashboard() {
 
       socket.on('sos_cancelled', (data) => {
         setSosRequests(prev => prev.filter(r => r._id !== data.sosId))
-        if (activeSOS?._id === data.sosId) {
-          setActiveSOS(null)
+        setActiveSOS(current => {
+          if (current?._id !== data.sosId) return current
           setError('Victim cancelled the SOS request.')
-        }
+          return null
+        })
       })
 
       socket.on('victim_location_update', (data) => {
@@ -478,7 +479,6 @@ function VolunteerDashboard() {
             <div style={{ marginTop: '20px' }}>
               <ChatBox
                 sosId={activeSOS._id}
-                receiverId={activeSOS.victimId?._id || activeSOS.victimId}
               />
             </div>
           </div>

@@ -102,7 +102,7 @@ Focus only on immediate first aid or safety actions they can take right now.`
           text: 'All AI models are currently busy. Please stay calm — help is on the way. Basic advice: stay still, breathe slowly, and wait for the volunteer.'
         }])
       }
-    } catch (err) {
+    } catch {
       setMessages(prev => [...prev, {
         role: 'assistant',
         text: 'Connection error. Stay calm, help is on the way.'

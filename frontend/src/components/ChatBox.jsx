@@ -1,8 +1,8 @@
 import { useState, useEffect, useRef } from 'react'
-import { useAuth } from '../context/AuthContext'
+import { useAuth } from '../context/useAuth'
 import api from '../services/api'
 
-export default function ChatBox({ sosId, receiverId }) {
+export default function ChatBox({ sosId }) {
   const { user, socket } = useAuth()
   const [messages, setMessages] = useState([])
   const [input, setInput] = useState('')
@@ -23,19 +23,21 @@ export default function ChatBox({ sosId, receiverId }) {
 
     socket.emit('join_sos_room', sosId)
 
-    socket.on('new_message', (msg) => {
-      const senderId = msg.senderId?._id || msg.senderId
-      // Only add if message is from the other person
-      if (senderId !== user._id) {
-        setMessages(prev => [...prev, msg])
-      }
-    })
+    const handleNewMessage = (msg) => {
+  const senderId = msg.senderId?._id?.toString() || msg.senderId?.toString()
+  const myId = user._id?.toString()
+  if (senderId !== myId) {
+    setMessages(prev => [...prev, msg])
+  }
+}
+
+    socket.on('new_message', handleNewMessage)
 
     return () => {
       socket.emit('leave_sos_room', sosId)
-      socket.off('new_message')
+      socket.off('new_message', handleNewMessage)
     }
-  }, [socket, sosId])
+  }, [socket, sosId, user._id])
 
   // Auto scroll to bottom
   useEffect(() => {

@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { useAuth } from '../context/AuthContext'
+import { useAuth } from '../context/useAuth'
 import api from '../services/api'
 import SOSMap from '../components/SOSMap'
 import AIAssistant from '../components/AIAssistant'
@@ -302,11 +302,11 @@ function SOSDashboard() {
         } finally {
           setLoading(false)
         }
-      }, (err) => {
+      }, () => {
         setError('Location access denied. Please enable GPS.')
         setLoading(false)
       }, GEO_OPTIONS)
-    } catch (err) {
+    } catch {
       setError('Failed to get location')
       setLoading(false)
     }
@@ -439,7 +439,6 @@ function SOSDashboard() {
               <div style={{ marginTop: '20px' }}>
                 <ChatBox
                   sosId={activeSOS._id}
-                  receiverId={activeSOS.assignedVolunteer}
                 />
               </div>
             )}

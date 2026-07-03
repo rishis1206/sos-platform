@@ -30,9 +30,7 @@ export default function SOSMap({ victimLocation, volunteerLocation, showRoute = 
     if (!mapRef.current || mapInstanceRef.current) return
 
     const map = L.map(mapRef.current, {
-      center: victimLocation
-        ? [victimLocation.lat, victimLocation.lng]
-        : [14.4534, 75.9239],
+      center: [14.4534, 75.9239],
       zoom: 15,
     })
 
@@ -69,7 +67,7 @@ export default function SOSMap({ victimLocation, volunteerLocation, showRoute = 
     if (!volunteerLocation) {
       mapInstanceRef.current.setView([victimLocation.lat, victimLocation.lng], 15)
     }
-  }, [victimLocation])
+  }, [victimLocation, volunteerLocation])
 
   // Update volunteer marker + route
   useEffect(() => {
