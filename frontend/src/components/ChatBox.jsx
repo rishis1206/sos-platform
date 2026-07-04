@@ -9,7 +9,6 @@ export default function ChatBox({ sosId }) {
   const [loading, setLoading] = useState(false)
   const bottomRef = useRef(null)
 
-  // Load existing messages
   useEffect(() => {
     if (!sosId) return
     api.get(`/messages/${sosId}`)
@@ -17,19 +16,18 @@ export default function ChatBox({ sosId }) {
       .catch(() => {})
   }, [sosId])
 
-  // Join SOS room and listen for new messages
   useEffect(() => {
     if (!socket || !sosId) return
 
     socket.emit('join_sos_room', sosId)
 
     const handleNewMessage = (msg) => {
-  const senderId = msg.senderId?._id?.toString() || msg.senderId?.toString()
-  const myId = user._id?.toString()
-  if (senderId !== myId) {
-    setMessages(prev => [...prev, msg])
-  }
-}
+      setMessages(prev => {
+        const exists = prev.some(m => m._id === msg._id)
+        if (exists) return prev
+        return [...prev, msg]
+      })
+    }
 
     socket.on('new_message', handleNewMessage)
 
@@ -37,9 +35,8 @@ export default function ChatBox({ sosId }) {
       socket.emit('leave_sos_room', sosId)
       socket.off('new_message', handleNewMessage)
     }
-  }, [socket, sosId, user._id])
+  }, [socket, sosId])
 
-  // Auto scroll to bottom
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages])
@@ -56,11 +53,16 @@ export default function ChatBox({ sosId }) {
         message: messageText
       })
 
-      // Add to local state immediately so sender sees it
-      setMessages(prev => [...prev, {
+      const newMsg = {
         ...res.data.message,
         senderId: { _id: user._id, name: user.name }
-      }])
+      }
+
+      setMessages(prev => {
+        const exists = prev.some(m => m._id === newMsg._id)
+        if (exists) return prev
+        return [...prev, newMsg]
+      })
 
     } catch (err) {
       console.error('Failed to send message:', err)
@@ -82,7 +84,6 @@ export default function ChatBox({ sosId }) {
         ✦ Emergency Chat
       </div>
 
-      {/* Messages */}
       <div style={{ height: '220px', overflowY: 'auto', marginBottom: '12px', display: 'flex', flexDirection: 'column', gap: '8px', padding: '4px' }}>
         {messages.length === 0 ? (
           <div style={{ color: '#333', fontSize: '11px', letterSpacing: '2px', textTransform: 'uppercase', textAlign: 'center', marginTop: '80px' }}>
@@ -90,10 +91,10 @@ export default function ChatBox({ sosId }) {
           </div>
         ) : (
           messages.map((msg, i) => {
-            const senderId = msg.senderId?._id || msg.senderId
-            const isMe = senderId === user._id
+            const senderId = msg.senderId?._id?.toString() || msg.senderId?.toString()
+            const isMe = senderId === user._id?.toString()
             return (
-              <div key={i} style={{
+              <div key={msg._id || i} style={{
                 display: 'flex',
                 flexDirection: 'column',
                 alignItems: isMe ? 'flex-end' : 'flex-start'
@@ -124,7 +125,6 @@ export default function ChatBox({ sosId }) {
         <div ref={bottomRef} />
       </div>
 
-      {/* Input */}
       <div style={{ display: 'flex', gap: '8px' }}>
         <input
           style={{
