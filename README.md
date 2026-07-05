@@ -8,7 +8,7 @@ A real-time emergency response system connecting victims with nearby volunteers,
 
 ## 🌐 Live Demo
 
-https://youtu.be/-xW9SEcwGR4
+https://youtu.be/-xW9SEcwGR4  - recommend watching at 2x speed
 
 ---
 
