@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { useState, useEffect } from 'react'
 
 const GEMINI_API_KEY = import.meta.env.VITE_GEMINI_API_KEY
 
@@ -74,6 +75,28 @@ export default function AIAssistant({ category, description }) {
   ])
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false)
+
+  useEffect(() => {
+  const autoAsk = async () => {
+    const prompt = `You are an emergency first aid AI assistant.
+The victim is experiencing: ${category?.replace('_', ' ')} emergency.
+Additional context: ${description || 'No description'}
+
+Without waiting for questions, immediately provide:
+1. The 3 most critical immediate actions to take RIGHT NOW
+2. What NOT to do
+3. One reassuring message to keep them calm
+
+Keep it short, clear and actionable.`
+
+    const reply = await askGemini(prompt)
+    if (reply) {
+      setMessages(prev => [...prev, { role: 'assistant', text: reply }])
+    }
+  }
+
+  autoAsk()
+}, [])
 
   const ask = async () => {
     if (!input.trim()) return
