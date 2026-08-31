@@ -9,22 +9,25 @@ const { protect, restrictTo } = require('../middleware/auth');
 router.get('/public', async (req, res, next) => {
   try {
     const logs = await SOSRequest.find({
-      status: { $in: ['completed', 'cancelled', 'pending', 'accepted'] }
+      status: { $in: ['completed', 'cancelled', 'pending', 'accepted', 'responding'] }
     })
       .populate('victimId', 'name')
       .populate('assignedVolunteer', 'name')
       .sort({ createdAt: -1 })
       .limit(20)
       .select('category status createdAt completedAt victimId assignedVolunteer severity location')
+      .lean()
 
+    console.log(`Public activity log: found ${logs.length} logs`)
     res.json({ success: true, logs })
   } catch (error) {
+    console.error('Error fetching public logs:', error)
     next(error)
   }
 })
 
 // POST /api/sos - Create SOS request with dynamic radius expansion
-router.post('/', protect, restrictTo('victim'), async (req, res, next) => {
+router.post('/', protect, restrictTo('victim', 'volunteer'), async (req, res, next) => {
   try {
     const { category, description, latitude, longitude, address } = req.body
 
@@ -63,6 +66,7 @@ router.post('/', protect, restrictTo('victim'), async (req, res, next) => {
 
     sos.addTimelineEvent('SOS Created')
     await sos.save()
+    console.log(`SOS created successfully: ID=${sos._id}, victimId=${req.user._id}, status=${sos.status}`)
 
     // Update victim location
     req.user.updateLocation(latitude, longitude)
@@ -72,15 +76,58 @@ router.post('/', protect, restrictTo('victim'), async (req, res, next) => {
 
     // Dynamic radius expansion stages
     // Stage 1: 500m immediately
-    // Stage 2: 1km after 2 minutes
-    // Stage 3: 5km after 4 minutes
-    // Stage 4: 10km after 6 minutes
+    // Stage 2: 1km after 30 seconds
+    // Stage 3: 5km after 60 seconds
+    // Stage 4: 10km after 90 seconds
+    // Stage 5: Notify emergency contacts after 120 seconds if no response
     const radiusStages = [
       { radius: 0.5, delay: 0 },
-      { radius: 1, delay: 2 * 60 * 1000 },
-      { radius: 5, delay: 4 * 60 * 1000 },
-      { radius: 10, delay: 6 * 60 * 1000 }
+      { radius: 1, delay: 30 * 1000 },
+      { radius: 5, delay: 60 * 1000 },
+      { radius: 10, delay: 90 * 1000 }
     ]
+
+    // Emergency contacts fallback
+    const notifyEmergencyContacts = async () => {
+      try {
+        const currentSOS = await SOSRequest.findById(sos._id)
+        if (!currentSOS || currentSOS.status !== 'pending') {
+          console.log(`SOS ${sos._id} no longer pending — skipping emergency contacts`)
+          return
+        }
+
+        // Check if already notified emergency contacts
+        if (currentSOS.emergencyContactsNotified) {
+          return
+        }
+
+        const victim = await User.findById(req.user._id)
+        if (!victim.emergencyContacts || victim.emergencyContacts.length === 0) {
+          console.log(`SOS ${sos._id}: No emergency contacts configured`)
+          return
+        }
+
+        // Mark as notified
+        currentSOS.emergencyContactsNotified = true
+        currentSOS.addTimelineEvent('Emergency contacts notified (no volunteer response)')
+        await currentSOS.save()
+
+        // Notify via socket (in production, this would send SMS/call)
+        victim.emergencyContacts.forEach(contact => {
+          io.to(`user_${victim._id}`).emit('emergency_contacts_notified', {
+            sosId: sos._id,
+            category: sos.category,
+            contactName: contact.name,
+            contactPhone: contact.phone,
+            message: `${victim.name} has triggered an emergency SOS. No volunteers responded. Please check on them immediately.`
+          })
+        })
+
+        console.log(`📞 SOS ${sos._id}: Notified ${victim.emergencyContacts.length} emergency contacts`)
+      } catch (err) {
+        console.error('Error notifying emergency contacts:', err.message)
+      }
+    }
 
     const notifyVolunteers = async (radius) => {
       try {
@@ -128,6 +175,21 @@ router.post('/', protect, restrictTo('victim'), async (req, res, next) => {
             })
           })
 
+          // Also broadcast to all connected clients so any volunteer sees the alert instantly
+          io.emit('new_sos_request', {
+            sosId: sos._id,
+            category: sos.category,
+            description: sos.description,
+            location: {
+              lat: parseFloat(latitude),
+              lng: parseFloat(longitude),
+              address
+            },
+            victimName: req.user.name,
+            radius: `${radius}km`,
+            createdAt: sos.createdAt
+          })
+
           console.log(`📡 SOS ${sos._id}: Notified ${volunteers.length} volunteers within ${radius}km`)
         } else {
           console.log(`📡 SOS ${sos._id}: No new volunteers found within ${radius}km`)
@@ -141,6 +203,9 @@ router.post('/', protect, restrictTo('victim'), async (req, res, next) => {
     radiusStages.forEach(({ radius, delay }) => {
       setTimeout(() => notifyVolunteers(radius), delay)
     })
+
+    // Schedule emergency contacts notification after 120 seconds
+    setTimeout(() => notifyEmergencyContacts(), 120 * 1000)
 
     // AI Analysis in background
     axios.post(
@@ -188,8 +253,17 @@ router.get('/', protect, async (req, res, next) => {
         victimId: req.user._id,
         status: { $in: ['pending', 'accepted', 'responding'] }
       }
+      console.log(`Victim ${req.user._id} querying for active SOS`)
     } else {
-      query = { status: 'pending' }
+      // For volunteers: show ALL pending SOS (no location filter for testing)
+      // AND SOS assigned to them
+      query = {
+        $or: [
+          { status: 'pending' },
+          { assignedVolunteer: req.user._id, status: { $in: ['accepted', 'responding'] } }
+        ]
+      }
+      console.log(`Volunteer ${req.user._id} querying for SOS requests`)
     }
 
     const requests = await SOSRequest.find(query)
@@ -198,8 +272,10 @@ router.get('/', protect, async (req, res, next) => {
       .sort({ createdAt: -1 })
       .limit(50)
 
+    console.log(`Found ${requests.length} SOS requests for user ${req.user._id}`)
     res.json({ success: true, count: requests.length, requests })
   } catch (error) {
+    console.error('Error fetching SOS requests:', error)
     next(error)
   }
 })
@@ -318,13 +394,21 @@ router.put('/:id/complete', protect, restrictTo('volunteer'), async (req, res, n
 // PUT /api/sos/:id/cancel
 router.put('/:id/cancel', protect, restrictTo('victim'), async (req, res, next) => {
   try {
+    console.log(`Cancel SOS request: ID=${req.params.id}, userId=${req.user._id}`)
     const sos = await SOSRequest.findById(req.params.id)
 
     if (!sos) {
+      console.log('SOS not found for cancellation')
       return res.status(404).json({ success: false, message: 'SOS not found' })
     }
 
+    if (sos.victimId.toString() !== req.user._id.toString()) {
+      console.log('User not authorized to cancel this SOS')
+      return res.status(403).json({ success: false, message: 'Not authorized to cancel this SOS' })
+    }
+
     if (!['pending', 'accepted'].includes(sos.status)) {
+      console.log(`Cannot cancel SOS in status: ${sos.status}`)
       return res.status(400).json({ success: false, message: 'Cannot cancel at this stage' })
     }
 
@@ -332,6 +416,7 @@ router.put('/:id/cancel', protect, restrictTo('victim'), async (req, res, next) 
     sos.cancelledAt = new Date()
     sos.addTimelineEvent('Cancelled by Victim')
     await sos.save()
+    console.log(`SOS cancelled successfully: ID=${sos._id}`)
 
     if (sos.assignedVolunteer) {
       await User.findByIdAndUpdate(sos.assignedVolunteer, { isAvailable: true })
@@ -341,8 +426,135 @@ router.put('/:id/cancel', protect, restrictTo('victim'), async (req, res, next) 
 
     res.json({ success: true, message: 'SOS cancelled', sos })
   } catch (error) {
+    console.error('Error cancelling SOS:', error)
     next(error)
   }
 })
+
+// POST /api/sos/:id/emergency-call - Log emergency services call
+router.post('/:id/emergency-call', protect, restrictTo('victim'), async (req, res, next) => {
+  try {
+    const sos = await SOSRequest.findById(req.params.id)
+
+    if (!sos) {
+      return res.status(404).json({ success: false, message: 'SOS not found' })
+    }
+
+    sos.emergencyServicesCalled = true
+    sos.emergencyServicesCalledAt = new Date()
+    sos.addTimelineEvent('Emergency Services (911/112) Called')
+    await sos.save()
+
+    const io = req.app.get('io')
+    io.to(`user_${sos.victimId}`).emit('emergency_services_called', { sosId: sos._id })
+
+    res.json({ 
+      success: true, 
+      message: 'Emergency services call logged', 
+      sos 
+    })
+  } catch (error) {
+    next(error)
+  }
+})
+
+// GET /api/sos/emergency-numbers - Get emergency numbers based on location
+router.get('/emergency-numbers', async (req, res, next) => {
+  try {
+    const { country } = req.query
+    
+    // Emergency numbers by country
+    const emergencyNumbers = {
+      US: { police: '911', medical: '911', fire: '911' },
+      UK: { police: '999', medical: '999', fire: '999' },
+      EU: { police: '112', medical: '112', fire: '112' },
+      IN: { police: '100', medical: '102', fire: '101' },
+      AU: { police: '000', medical: '000', fire: '000' },
+      CA: { police: '911', medical: '911', fire: '911' },
+      default: { police: '112', medical: '112', fire: '112' }
+    }
+
+    const numbers = emergencyNumbers[country] || emergencyNumbers.default
+
+    res.json({ 
+      success: true, 
+      numbers,
+      universal: '112' // Universal European emergency number
+    })
+  } catch (error) {
+    next(error)
+  }
+})
+
+// GET /api/sos/nearby-hospitals - Get nearby hospitals based on location
+router.get('/nearby-hospitals', async (req, res, next) => {
+  try {
+    const { lat, lng, radius = 5000 } = req.query // radius in meters, default 5km
+
+    if (!lat || !lng) {
+      return res.status(400).json({ success: false, message: 'Latitude and longitude required' })
+    }
+
+    // Use OpenStreetMap Overpass API to find nearby hospitals
+    const overpassQuery = `
+      [out:json][timeout:25];
+      (
+        node["amenity"="hospital"](around:${radius},${lat},${lng});
+        way["amenity"="hospital"](around:${radius},${lat},${lng});
+        relation["amenity"="hospital"](around:${radius},${lat},${lng});
+      );
+      out body center;
+    `
+
+    const response = await fetch('https://overpass-api.de/api/interpreter', {
+      method: 'POST',
+      body: overpassQuery,
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
+    })
+
+    const data = await response.json()
+
+    if (!data.elements || data.elements.length === 0) {
+      return res.json({ success: true, hospitals: [] })
+    }
+
+    // Process and format hospital data
+    const hospitals = data.elements.slice(0, 5).map(element => {
+      const lat = element.lat || element.center?.lat
+      const lng = element.lon || element.center?.lon
+      const name = element.tags?.name || 'Unknown Hospital'
+      
+      // Calculate distance using Haversine formula
+      const distance = calculateDistance(lat, lng, parseFloat(req.query.lat), parseFloat(req.query.lng))
+      
+      return {
+        name,
+        lat,
+        lng,
+        distance: Math.round(distance * 100) / 100, // Round to 2 decimal places
+        address: element.tags?.['addr:street'] || 'Address not available',
+        phone: element.tags?.phone || null
+      }
+    }).sort((a, b) => a.distance - b.distance)
+
+    res.json({ success: true, hospitals })
+  } catch (error) {
+    console.error('Hospital search error:', error)
+    // Return empty array on error instead of failing
+    res.json({ success: true, hospitals: [] })
+  }
+})
+
+// Haversine formula to calculate distance between two points
+function calculateDistance(lat1, lon1, lat2, lon2) {
+  const R = 6371 // Earth's radius in km
+  const dLat = (lat2 - lat1) * Math.PI / 180
+  const dLon = (lon2 - lon1) * Math.PI / 180
+  const a = Math.sin(dLat/2) * Math.sin(dLat/2) +
+            Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+            Math.sin(dLon/2) * Math.sin(dLon/2)
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a))
+  return R * c
+}
 
 module.exports = router;

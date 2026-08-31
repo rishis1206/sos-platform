@@ -6,10 +6,55 @@ const { protect, restrictTo } = require('../middleware/auth');
 // GET /api/volunteers/nearby
 router.get('/nearby', protect, async (req, res, next) => {
   try {
-    const { latitude, longitude, radius = 10 } = req.query;
+    const { latitude, longitude, radius = 10, useKnn, k = 10 } = req.query;
 
     if (!latitude || !longitude) {
       return res.status(400).json({ success: false, message: 'Latitude and longitude required' });
+    }
+
+    if (useKnn === 'true') {
+      const kLimit = parseInt(k) || 10;
+      const volunteers = await User.aggregate([
+        {
+          $geoNear: {
+            near: {
+              type: 'Point',
+              coordinates: [parseFloat(longitude), parseFloat(latitude)]
+            },
+            distanceField: 'distanceMeters',
+            maxDistance: parseInt(radius) * 1000,
+            query: { role: 'volunteer', isAvailable: true },
+            spherical: true
+          }
+        },
+        {
+          $addFields: {
+            // Composite Multi-Criteria k-NN distance metric
+            // Balances geographic proximity (70%) and volunteer experience (30%)
+            knnScore: {
+              $add: [
+                { $multiply: ['$distanceMeters', 0.7] },
+                { $divide: [1000, { $add: ['$rescueCount', 1] }] }
+              ]
+            }
+          }
+        },
+        { $sort: { knnScore: 1 } },
+        { $limit: kLimit },
+        {
+          $project: {
+            name: 1,
+            location: 1,
+            isAvailable: 1,
+            lastSeen: 1,
+            rescueCount: 1,
+            distanceMeters: 1,
+            knnScore: 1
+          }
+        }
+      ]);
+
+      return res.json({ success: true, count: volunteers.length, mode: 'knn', volunteers });
     }
 
     const volunteers = await User.find({
@@ -26,7 +71,61 @@ router.get('/nearby', protect, async (req, res, next) => {
       }
     }).select('name location isAvailable lastSeen rescueCount').limit(20);
 
-    res.json({ success: true, count: volunteers.length, volunteers });
+    res.json({ success: true, count: volunteers.length, mode: 'geospatial', volunteers });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// GET /api/volunteers/smart-nearby (Dedicated Multi-Criteria k-NN matching endpoint)
+router.get('/smart-nearby', protect, async (req, res, next) => {
+  try {
+    const { latitude, longitude, radius = 10, k = 10 } = req.query;
+
+    if (!latitude || !longitude) {
+      return res.status(400).json({ success: false, message: 'Latitude and longitude required' });
+    }
+
+    const kLimit = parseInt(k) || 10;
+    const volunteers = await User.aggregate([
+      {
+        $geoNear: {
+          near: {
+            type: 'Point',
+            coordinates: [parseFloat(longitude), parseFloat(latitude)]
+          },
+          distanceField: 'distanceMeters',
+          maxDistance: parseInt(radius) * 1000,
+          query: { role: 'volunteer', isAvailable: true },
+          spherical: true
+        }
+      },
+      {
+        $addFields: {
+          knnScore: {
+            $add: [
+              { $multiply: ['$distanceMeters', 0.7] },
+              { $divide: [1000, { $add: ['$rescueCount', 1] }] }
+            ]
+          }
+        }
+      },
+      { $sort: { knnScore: 1 } },
+      { $limit: kLimit },
+      {
+        $project: {
+          name: 1,
+          location: 1,
+          isAvailable: 1,
+          lastSeen: 1,
+          rescueCount: 1,
+          distanceMeters: 1,
+          knnScore: 1
+        }
+      }
+    ]);
+
+    res.json({ success: true, count: volunteers.length, mode: 'knn', volunteers });
   } catch (error) {
     next(error);
   }

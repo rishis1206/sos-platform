@@ -46,7 +46,7 @@ router.post('/', protect, async (req, res, next) => {
     }
 
     const isVictim = sos.victimId.toString() === req.user._id.toString();
-    const receiverId = isVictim ? sos.assignedVolunteer : sos.victimId;
+    const receiverId = isVictim ? (sos.assignedVolunteer || null) : sos.victimId;
 
     const newMessage = await Message.create({
       sosId,
@@ -58,9 +58,15 @@ router.post('/', protect, async (req, res, next) => {
     const populated = await Message.findById(newMessage._id)
       .populate('senderId', 'name role');
 
-    // Emit via socket
+    // Emit via socket to SOS room AND user rooms
     const io = req.app.get('io');
-    io.to(`sos_${sosId}`).emit('new_message', populated);
+    if (io) {
+      io.to(`sos_${sosId}`).emit('new_message', populated);
+      if (receiverId) {
+        io.to(`user_${receiverId}`).emit('new_message', populated);
+      }
+      io.to(`user_${req.user._id}`).emit('new_message', populated);
+    }
 
     res.status(201).json({ success: true, message: populated });
   } catch (error) {

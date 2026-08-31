@@ -13,30 +13,63 @@ const generateToken = (id) => {
 // POST /api/auth/send-otp
 router.post('/send-otp', async (req, res, next) => {
   try {
-    const { phone } = req.body;
+    const { phone, role } = req.body;
+    console.log(`[AUTH] Login / OTP request received for phone: "${phone}" (role: ${role || 'any'})`);
 
-    if (!phone) {
-      return res.status(400).json({ success: false, message: 'Phone number is required' });
+    if (!phone || typeof phone !== 'string' || !phone.trim()) {
+      return res.status(400).json({ success: false, message: 'Valid phone number is required' });
     }
 
-    let user = await User.findOne({ phone });
+    const cleanPhone = phone.trim().replace(/[^\d+]/g, '');
+    if (!cleanPhone) {
+      return res.status(400).json({ success: false, message: 'Invalid phone number format' });
+    }
+
+    let user = await User.findOne({ phone: cleanPhone });
+
+    // IF user exists and is fully registered (has real name, not 'temp'), DIRECT LOGIN!
+    if (user && user.name && user.name !== 'temp' && user.isVerified) {
+      if (role && user.role !== role) {
+        user.role = role;
+        await user.save();
+      }
+
+      const token = generateToken(user._id);
+      console.log(`[AUTH] ⚡ Direct login granted for registered user: ${user.name} (${cleanPhone})`);
+
+      return res.json({
+        success: true,
+        isExistingUser: true,
+        message: `Welcome back, ${user.name}!`,
+        token,
+        user: {
+          id: user._id,
+          name: user.name,
+          phone: user.phone,
+          role: user.role
+        }
+      });
+    }
+
+    // 1ST TIME REGISTRATION -> Require OTP Flow
     if (!user) {
-      user = new User({ phone, name: 'temp', role: 'victim' });
+      user = new User({ phone: cleanPhone, name: 'temp', role: role || 'victim' });
+    } else if (role && user.role !== role) {
+      user.role = role;
     }
 
     const otp = user.generateOTP();
     await user.save();
 
-    // In production: send via Twilio
-    // For now we return it directly in dev mode
-    console.log(`OTP for ${phone}: ${otp}`);
+    console.log(`[AUTH] 🔑 OTP generated for 1st-time registration (${cleanPhone}): ${otp}`);
 
     res.json({
       success: true,
-      message: 'OTP sent successfully',
-      ...(process.env.NODE_ENV === 'development' && { otp })
+      isExistingUser: false,
+      message: 'OTP sent successfully for registration'
     });
   } catch (error) {
+    console.error('[AUTH] ❌ Error in send-otp:', error);
     next(error);
   }
 });
@@ -50,7 +83,8 @@ router.post('/verify-otp', async (req, res, next) => {
       return res.status(400).json({ success: false, message: 'Phone and OTP are required' });
     }
 
-    const user = await User.findOne({ phone });
+    const cleanPhone = phone.trim().replace(/[^\d+]/g, '');
+    const user = await User.findOne({ phone: cleanPhone });
 
     if (!user) {
       return res.status(404).json({ success: false, message: 'User not found. Request OTP first.' });

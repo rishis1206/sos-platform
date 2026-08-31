@@ -61,6 +61,15 @@ const sosRequestSchema = new mongoose.Schema({
   }],
   completedAt: Date,
   cancelledAt: Date,
+  emergencyServicesCalled: {
+    type: Boolean,
+    default: false
+  },
+  emergencyServicesCalledAt: Date,
+  emergencyContactsNotified: {
+    type: Boolean,
+    default: false
+  },
   createdAt: {
     type: Date,
     default: Date.now

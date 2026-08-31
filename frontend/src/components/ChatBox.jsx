@@ -22,11 +22,14 @@ export default function ChatBox({ sosId }) {
     socket.emit('join_sos_room', sosId)
 
     const handleNewMessage = (msg) => {
-      setMessages(prev => {
-        const exists = prev.some(m => m._id === msg._id)
-        if (exists) return prev
-        return [...prev, msg]
-      })
+      const msgSosId = typeof msg.sosId === 'object' ? msg.sosId._id : msg.sosId
+      if (String(msgSosId) === String(sosId)) {
+        setMessages(prev => {
+          const exists = prev.some(m => String(m._id) === String(msg._id))
+          if (exists) return prev
+          return [...prev, msg]
+        })
+      }
     }
 
     socket.on('new_message', handleNewMessage)
@@ -42,7 +45,7 @@ export default function ChatBox({ sosId }) {
   }, [messages])
 
   const sendMessage = async () => {
-    if (!input.trim()) return
+    if (!input.trim() || !sosId) return
     setLoading(true)
     const messageText = input.trim()
     setInput('')
@@ -53,17 +56,14 @@ export default function ChatBox({ sosId }) {
         message: messageText
       })
 
-      const newMsg = {
-        ...res.data.message,
-        senderId: { _id: user._id, name: user.name }
+      const newMsg = res.data.message
+      if (newMsg) {
+        setMessages(prev => {
+          const exists = prev.some(m => String(m._id) === String(newMsg._id))
+          if (exists) return prev
+          return [...prev, newMsg]
+        })
       }
-
-      setMessages(prev => {
-        const exists = prev.some(m => m._id === newMsg._id)
-        if (exists) return prev
-        return [...prev, newMsg]
-      })
-
     } catch (err) {
       console.error('Failed to send message:', err)
     } finally {
@@ -91,8 +91,8 @@ export default function ChatBox({ sosId }) {
           </div>
         ) : (
           messages.map((msg, i) => {
-            const senderId = msg.senderId?._id?.toString() || msg.senderId?.toString()
-            const isMe = senderId === user._id?.toString()
+            const rawSender = msg.senderId?._id || msg.senderId?.id || msg.senderId
+            const isMe = String(rawSender) === String(user?._id || user?.id)
             return (
               <div key={msg._id || i} style={{
                 display: 'flex',

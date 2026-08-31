@@ -1,43 +1,50 @@
-# 🚨 Emergent AI SOS — AI Powered Emergency Response Platform
+# 🚨 GeoSOS — AI-Driven Emergency Response Platform
 
-A real-time emergency response system connecting victims with nearby volunteers, powered by AI assistance, live GPS tracking, and instant notifications.
-
-> Built with React, Node.js, MongoDB, Socket.io, and Gemini AI
-
----
-
-## 🌐 Live Demo
-
-https://youtu.be/-xW9SEcwGR4  - recommend watching at 2x speed
+> **GeoSOS: AI-Driven Emergency Response Using KNN and Geospatial Intelligence**  
+> An advanced real-time emergency response platform connecting victims with nearby capable volunteers using 2D Sphere geospatial indexing, multi-criteria k-NN responder ranking, Google Gemini AI triage, and real-time Socket.io communication.
 
 ---
 
-## ✨ Features
+## 🌐 Research Paper & Live Demo
 
-### For Victims
-- One-tap SOS emergency trigger
-- 6 emergency categories — Medical, Accident, Fire, Assault, Natural Disaster, Other
-- Real-time GPS location sharing
-- Live map showing volunteer's location and ETA
-- AI-powered first aid assistant (Gemini 2.5)
-- Real-time chat with responding volunteer
-- Complete SOS history log
+- **Project Title**: GeoSOS: AI-Driven Emergency Response Using KNN and Geospatial Intelligence
+- **Authors**: Mrs. Akshatha A M S, Mr. Vishal V Pawar, Mr. Rishi S, Mr. Sanketh Gowda D G, Mr. Prajwal B M (Department of AIML, GMIT Davangere)
+- **Live Demo Video**: [Watch Demo on YouTube](https://youtu.be/-xW9SEcwGR4) *(Recommend 2x speed)*
 
-### For Volunteers
-- Real-time SOS notifications via Socket.io
-- Dynamic radius expansion — notified if within 500m, expands to 1km → 5km → 10km if no response
-- Distance display before accepting
-- Navigation map with route to victim
-- Real-time chat with victim
-- Rescue history and stats
+---
 
-### Platform
-- Phone OTP authentication (JWT)
-- Role-based access — victims and volunteers completely separated
-- Public activity log visible without login
-- Real-time everything via Socket.io
-- Mobile-first responsive design
-- Dark mode UI with red accent theme
+### 📊 Benchmark Performance & Research Highlights
+
+Under a controlled multi-seed simulation ($N=1,000$ paired emergency trials across seeds 42, 101, 2024):
+- **First-Attempt Responder Acceptance**: Improved from **$46.43\%$** (Naive nearest-only) to **$64.60\%$** (GeoSOS Multi-Criteria k-NN), an absolute gain of **$+18.17\%$** ($\chi^2 = 69.94, p < 0.001$, paired McNemar test).
+- **Multi-Attribute Objective Function**:
+  $$\text{Score}(v) = 0.7 \cdot \hat{D}_{\text{spatial}}(v) + 0.3 \cdot \hat{R}_{\text{experience}}(v) - 0.1 \cdot \hat{S}_{\text{skill}}(v)$$
+- **Trade-off Analysis**: Prioritizing experienced, skill-matched responders selects candidates roughly $280\text{ meters}$ farther away on average, trading a minor travel latency shift ($3.24\text{m} \to 3.50\text{m}$) for substantially higher dispatch reliability.
+
+---
+
+## ✨ Features & Architecture
+
+### 🚑 Emergency Dispatch & Matching
+- **Two-Stage KNN Responder Selection**:
+  1. *Stage 1 (Geospatial Candidate Retrieval)*: MongoDB `2dsphere` geohash indexing fetches candidate pool $C$ within search radius $R$ ($0.5\text{km} \to 1\text{km} \to 5\text{km} \to 10\text{km}$).
+  2. *Stage 2 (Multi-Criteria Ranking)*: Evaluates candidates across normalized distance, inverse-experience penalty, and skill match to rank Top-$K$ ($K=5$) responders.
+- **Distress Support for All Users**: Both Victims and Volunteers can trigger emergency SOS calls.
+
+### 🤖 AI Triage & Real-Time Communication
+- **Google Gemini 2.5 AI Assistant**: Real-time severity assessment, immediate first-aid instructions, and safety precautions.
+- **Multi-Language AI Support**: Emergency guidance rendered in English, Hindi, and Kannada.
+- **Real-time WebSockets**: Socket.io room isolation (`user_${id}`, `sos_${id}`) for live GPS tracking and bidirectional chat.
+- **Voice Emergency Input**: Speech Recognition API for hands-free emergency reporting.
+
+### ⚡ Load Balancing & High-Availability
+- **Multi-Core Process Cluster (`backend/cluster.js`)**: Spawns parallel worker processes across all CPU cores (`os.cpus().length`) with automatic worker crash recovery.
+- **Port Sharing & Round-Robin Load Distribution**: Run using `npm run cluster`.
+
+### 🛡️ Security & Privacy
+- **JWT Authentication**: Stateless token auth for REST APIs & Socket handshakes.
+- **DoS & Brute-Force Rate Limiting**: Dedicated rate limiters for auth, SOS creation, and general endpoints.
+- **Helmet.js Security Headers**: XSS, HSTS, Clickjacking, and MIME-sniffing protection.
 
 ---
 
@@ -45,197 +52,63 @@ https://youtu.be/-xW9SEcwGR4  - recommend watching at 2x speed
 
 | Layer | Technology |
 |---|---|
-| Frontend | React 18, Vite, Tailwind CSS |
-| Backend | Node.js, Express.js |
-| Database | MongoDB Atlas (Mongoose) |
-| Real-time | Socket.io |
-| Maps | Leaflet + OpenStreetMap |
-| AI Assistant | Google Gemini 2.5 Flash |
-| Auth | JWT + Phone OTP |
-| Deployment | Vercel (frontend) + Railway (backend) |
+| **Frontend** | React 19, Vite, Tailwind CSS, Leaflet Maps, vite-plugin-pwa |
+| **Backend** | Node.js, Express.js, Express Cluster Load Balancer, express-rate-limit |
+| **Database** | MongoDB Atlas (`2dsphere` Geospatial Indexing) |
+| **Real-time** | Socket.io (WebSocket Room Isolation) |
+| **AI Triage** | Google Gemini 2.5 Flash API |
+| **Auth** | JWT + Phone OTP Verification |
+
+---
+
+## 🚀 Quick Start
+
+### 1. Backend Setup
+```bash
+cd backend
+npm install
+npm run dev      # Single worker development mode
+# OR
+npm run cluster  # Multi-Core Load-Balanced Cluster Mode
+```
+
+### 2. Frontend Setup
+```bash
+cd frontend
+npm install
+npm run dev
+```
 
 ---
 
 ## 📁 Project Structure
+
+```text
 sos-platform/
-
-├── backend/                 # Node.js + Express API
-
-│   ├── models/              # MongoDB schemas
-
-│   │   ├── User.js
-
-│   │   ├── SOSRequest.js
-
-│   │   └── Message.js
-
-│   ├── routes/              # API endpoints
-
-│   │   ├── auth.js
-
-│   │   ├── sos.js
-
-│   │   ├── users.js
-
-│   │   ├── volunteers.js
-
-│   │   └── messages.js
-
-│   ├── middleware/          # Auth + error handling
-
-│   ├── socket/              # Socket.io handlers
-
-│   └── server.js
-
-│
-
-├── frontend/                # React + Vite
-
-│   └── src/
-
-│       ├── pages/
-
-│       │   ├── Home.jsx
-
-│       │   ├── Victim.jsx
-
-│       │   └── Volunteer.jsx
-
-│       ├── components/
-
-│       │   ├── SOSMap.jsx
-
-│       │   ├── AIAssistant.jsx
-
-│       │   └── ChatBox.jsx
-
-│       ├── context/
-
-│       │   └── AuthContext.jsx
-
-│       └── services/
-
-│           └── api.js
-
----
-
-## 🚀 Running Locally
-
-### Prerequisites
-- Node.js v18+
-- MongoDB Atlas account
-- Google Gemini API key
-
-### Backend Setup
-```bash
-cd backend
-npm install
-cp .env.example .env
-# Fill in your values in .env
-npm run dev
-```
-
-### Frontend Setup
-```bash
-cd frontend
-npm install
-# Create .env file with:
-# VITE_GEMINI_API_KEY=your_key
-npm run dev
+├── backend/
+│   ├── cluster.js           # Multi-core load balancer & worker crash manager
+│   ├── server.js            # Express API server & Socket.io setup
+│   ├── models/              # User, SOSRequest, Message schemas
+│   ├── routes/              # Auth, SOS, Volunteers, Messages API endpoints
+│   ├── middleware/          # JWT auth & RBAC permissions
+│   └── socket/              # WebSocket event handlers
+└── frontend/
+    └── src/
+        ├── pages/           # Home, Victim, Volunteer views
+        ├── components/      # SOSMap, AIAssistant, ChatBox
+        ├── context/         # AuthContext state manager
+        └── services/        # Axios API client
 ```
 
 ---
 
-## 🔑 Environment Variables
+## 👨‍💻 Developer & Authors
 
-### Backend `.env`
-PORT=5000
-
-NODE_ENV=development
-
-MONGODB_URI=your_mongodb_atlas_uri
-
-JWT_SECRET=your_jwt_secret
-
-JWT_EXPIRE=7d
-
-CLIENT_URL=http://localhost:3000
-
-DEFAULT_SEARCH_RADIUS=10
-
-GEMINI_API_KEY=your_gemini_key
-
-TWILIO_ACCOUNT_SID=your_twilio_sid
-
-TWILIO_AUTH_TOKEN=your_twilio_token
-
-TWILIO_PHONE_NUMBER=your_twilio_number
-
-AI_SERVICE_URL=http://localhost:8000
-
-### Frontend `.env`
-VITE_GEMINI_API_KEY=your_gemini_key
-
----
-
-## 📡 API Endpoints
-
-### Auth
-| Method | Endpoint | Description |
-|---|---|---|
-| POST | `/api/auth/send-otp` | Send OTP to phone |
-| POST | `/api/auth/verify-otp` | Verify OTP and login |
-| GET | `/api/auth/me` | Get current user |
-
-### SOS
-| Method | Endpoint | Description |
-|---|---|---|
-| POST | `/api/sos` | Create SOS request |
-| GET | `/api/sos` | Get active SOS requests |
-| GET | `/api/sos/public` | Public activity log |
-| GET | `/api/sos/history` | SOS history |
-| PUT | `/api/sos/:id/accept` | Volunteer accepts SOS |
-| PUT | `/api/sos/:id/complete` | Mark rescue complete |
-| PUT | `/api/sos/:id/cancel` | Cancel SOS |
-
-### Messages
-| Method | Endpoint | Description |
-|---|---|---|
-| GET | `/api/messages/:sosId` | Get chat messages |
-| POST | `/api/messages` | Send message |
-
-### Volunteers
-| Method | Endpoint | Description |
-|---|---|---|
-| GET | `/api/volunteers/nearby` | Get nearby volunteers |
-| PUT | `/api/volunteers/location` | Update location |
-| PUT | `/api/volunteers/availability` | Toggle availability |
-
----
-
-## 🔌 Socket.io Events
-
-| Event | Direction | Description |
-|---|---|---|
-| `new_sos_request` | Server → Volunteer | New SOS nearby |
-| `sos_accepted` | Server → Victim | Volunteer accepted |
-| `sos_completed` | Server → Victim | Rescue completed |
-| `sos_cancelled` | Server → Volunteer | Victim cancelled |
-| `new_message` | Server → Both | New chat message |
-| `victim_location_update` | Server → Volunteer | Victim moved |
-| `volunteer_location_update` | Server → Victim | Volunteer moved |
-| `update_location` | Client → Server | Send location |
-| `join_sos_room` | Client → Server | Join SOS chat room |
-
----
-
-## 👨‍💻 Developer
-
-**Rishi S**
-Final Year AI & ML Student — GMIT, Davangere (VTU)
+- **Rishi S** — Final Year AIML Student, GMIT Davangere (VTU)
+- **Co-Authors**: Mrs. Akshatha A M S, Mr. Vishal V Pawar, Mr. Sanketh Gowda D G, Mr. Prajwal B M
 
 ---
 
 ## 📄 License
 
-MIT License — feel free to use for educational purposes.
+MIT License — Feel free to use for educational and research purposes.

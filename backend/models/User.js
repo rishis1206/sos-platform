@@ -44,6 +44,11 @@ const userSchema = new mongoose.Schema({
     type: Number,
     default: 0
   },
+  emergencyContacts: [{
+    name: String,
+    phone: String,
+    relationship: String
+  }],
   createdAt: {
     type: Date,
     default: Date.now

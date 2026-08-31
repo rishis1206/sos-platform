@@ -37,7 +37,7 @@ export function AuthProvider({ children }) {
   }, [token])
 
   useEffect(() => {
-    if (!user || !token) return
+    if (!user?._id || !token) return
 
     const nextSocket = io(SOCKET_URL, {
       auth: { token }
@@ -56,7 +56,7 @@ export function AuthProvider({ children }) {
     return () => {
       nextSocket.disconnect()
     }
-  }, [user, token])
+  }, [user?._id, token])
 
   const login = (userData, userToken) => {
     localStorage.setItem('token', userToken)

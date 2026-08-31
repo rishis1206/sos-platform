@@ -64,8 +64,14 @@ function LoginForm() {
     setLoading(true)
     setError('')
     try {
-      const res = await api.post('/auth/send-otp', { phone })
-      setSuccess(`OTP sent! ${res.data.otp ? `(Dev mode OTP: ${res.data.otp})` : ''}`)
+      const res = await api.post('/auth/send-otp', { phone, role: 'victim' })
+      if (res.data.isExistingUser && res.data.token) {
+        setSuccess(`Welcome back, ${res.data.user.name}! Direct login successful.`)
+        login(res.data.user, res.data.token)
+        return
+      }
+      setSuccess('OTP sent successfully for registration!')
+      setIsNewUser(true)
       setStep('otp')
     } catch (err) {
       setError(err.response?.data?.message || 'Failed to send OTP')
@@ -198,10 +204,20 @@ function SOSDashboard() {
   const [success, setSuccess] = useState('')
   const [victimLocation, setVictimLocation] = useState(null)
   const [volunteerLocation, setVolunteerLocation] = useState(null)
+  const [batteryLevel, setBatteryLevel] = useState(null)
+  const [isLowBattery, setIsLowBattery] = useState(false)
+  const [powerSavingMode, setPowerSavingMode] = useState(false)
+  const [isRecording, setIsRecording] = useState(false)
+  const [voiceSupported, setVoiceSupported] = useState(false)
+  const [nearbyHospitals, setNearbyHospitals] = useState([])
+  const [showEmergencyContacts, setShowEmergencyContacts] = useState(false)
+  const [newContact, setNewContact] = useState({ name: '', phone: '', relationship: '' })
+  const [selectedLanguage, setSelectedLanguage] = useState('en')
 
   useEffect(() => {
     api.get('/sos')
       .then(res => {
+        console.log('Fetched SOS for victim:', res.data)
         if (res.data.requests && res.data.requests.length > 0) {
           const sos = res.data.requests[0]
           setActiveSOS(sos)
@@ -211,15 +227,52 @@ function SOSDashboard() {
               lng: sos.location.coordinates[0]
             })
           }
+        } else {
+          console.log('No active SOS found for victim')
         }
       })
-      .catch(() => {})
+      .catch(err => console.error('Error fetching SOS:', err))
 
     api.get('/sos/history')
       .then(res => {
+        console.log('Fetched SOS history:', res.data)
         if (res.data.history) setHistory(res.data.history)
       })
-      .catch(() => {})
+      .catch(err => console.error('Error fetching history:', err))
+
+    // Battery monitoring
+    if ('getBattery' in navigator) {
+      navigator.getBattery().then(battery => {
+        setBatteryLevel(battery.level * 100)
+        setIsLowBattery(battery.level < 0.2)
+        
+        const handleLevelChange = () => {
+          setBatteryLevel(battery.level * 100)
+          setIsLowBattery(battery.level < 0.2)
+          if (battery.level < 0.15 && activeSOS) {
+            setSuccess('⚠️ Low battery! SOS will continue but location updates may slow.')
+          }
+        }
+        
+        battery.addEventListener('levelchange', handleLevelChange)
+        return () => battery.removeEventListener('levelchange', handleLevelChange)
+      })
+    }
+
+    // Check for Web Speech API support
+    setVoiceSupported('webkitSpeechRecognition' in window || 'SpeechRecognition' in window)
+
+    // DISABLED: Nearby hospitals causing excessive API requests
+    // // Fetch nearby hospitals when SOS is active
+    // if (activeSOS && victimLocation) {
+    //   api.get(`/sos/nearby-hospitals?lat=${victimLocation.lat}&lng=${victimLocation.lng}`)
+    //     .then(res => {
+    //       if (res.data.hospitals) {
+    //         setNearbyHospitals(res.data.hospitals)
+    //       }
+    //     })
+    //     .catch(() => {})
+    // }
 
     if (socket) {
       socket.on('sos_accepted', (data) => {
@@ -251,7 +304,7 @@ function SOSDashboard() {
         socket.off('volunteer_location_update')
       }
     }
-  }, [socket])
+  }, [socket, activeSOS])
 
   const triggerSOS = async () => {
     if (!category) return setError('Select an emergency category first')
@@ -278,6 +331,9 @@ function SOSDashboard() {
 
           if (socket) socket.emit('join_sos_room', res.data.sos._id)
 
+          // Adjust tracking interval based on battery level
+          const trackingInterval = isLowBattery ? 30000 : 10000 // 30s if low battery, 10s normal
+          
           const tracker = setInterval(() => {
             navigator.geolocation.getCurrentPosition(p => {
               const newLat = p.coords.latitude
@@ -293,7 +349,7 @@ function SOSDashboard() {
                 sosId: res.data.sos._id
               })
             }, (err) => console.error('Location error:', err), GEO_OPTIONS)
-          }, 10000)
+          }, trackingInterval)
 
           window._sosTracker = tracker
 
@@ -332,6 +388,89 @@ function SOSDashboard() {
     }
   }
 
+  const callEmergencyServices = async () => {
+    if (!activeSOS) return
+    try {
+      await api.post(`/sos/${activeSOS._id}/emergency-call`)
+      setSuccess('Emergency services call logged. Stay safe!')
+    } catch (err) {
+      setError(err.response?.data?.message || 'Failed to log call')
+    }
+  }
+
+  const getEmergencyNumber = async () => {
+    try {
+      const res = await api.get('/sos/emergency-numbers?country=IN')
+      return res.data.numbers.police || '112'
+    } catch {
+      return '112'
+    }
+  }
+
+  const startVoiceRecording = () => {
+    if (!voiceSupported) {
+      setError('Voice input not supported in this browser')
+      return
+    }
+
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition
+    const recognition = new SpeechRecognition()
+    
+    recognition.lang = 'en-US'
+    recognition.continuous = false
+    recognition.interimResults = false
+
+    recognition.onstart = () => {
+      setIsRecording(true)
+      setSuccess('Listening... Speak now')
+    }
+
+    recognition.onresult = (event) => {
+      const transcript = event.results[0][0].transcript
+      setDescription(transcript)
+      setIsRecording(false)
+      setSuccess('Voice recorded successfully')
+    }
+
+    recognition.onerror = (event) => {
+      setIsRecording(false)
+      setError('Voice recognition failed: ' + event.error)
+    }
+
+    recognition.onend = () => {
+      setIsRecording(false)
+    }
+
+    recognition.start()
+  }
+
+  const addEmergencyContact = async () => {
+    if (!newContact.name || !newContact.phone) {
+      setError('Name and phone are required')
+      return
+    }
+
+    try {
+      const res = await api.post('/users/emergency-contacts', newContact)
+      setSuccess('Emergency contact added successfully')
+      setNewContact({ name: '', phone: '', relationship: '' })
+      // Refresh user data
+      const profileRes = await api.get('/users/profile')
+      // Update user context if needed
+    } catch (err) {
+      setError(err.response?.data?.message || 'Failed to add contact')
+    }
+  }
+
+  const removeEmergencyContact = async (index) => {
+    try {
+      await api.delete(`/users/emergency-contacts/${index}`)
+      setSuccess('Emergency contact removed')
+    } catch (err) {
+      setError(err.response?.data?.message || 'Failed to remove contact')
+    }
+  }
+
   return (
     <div style={{ display: 'flex', minHeight: 'calc(100vh - 57px)' }}>
       <div style={{ flex: 1, padding: '48px', borderRight: '1px solid #1c1c1c', overflowY: 'auto' }}>
@@ -342,16 +481,190 @@ function SOSDashboard() {
               Welcome, {user.name}
             </div>
           </div>
-          <button
-            onClick={logout}
-            style={{ padding: '8px 20px', background: 'transparent', border: '1px solid #222', color: '#555', fontFamily: 'Oswald, sans-serif', fontSize: '12px', letterSpacing: '3px', textTransform: 'uppercase', cursor: 'pointer', borderRadius: '3px' }}
-          >
-            Logout
-          </button>
+          <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
+            {batteryLevel !== null && (
+              <div style={{ 
+                display: 'flex', 
+                alignItems: 'center', 
+                gap: '8px',
+                padding: '8px 12px',
+                background: isLowBattery ? '#1a0500' : '#111',
+                border: isLowBattery ? '1px solid #cc0000' : '1px solid #222',
+                borderRadius: '3px'
+              }}>
+                <div style={{ 
+                  width: '24px', 
+                  height: '12px', 
+                  border: '1px solid #555', 
+                  borderRadius: '2px',
+                  position: 'relative',
+                  background: '#111'
+                }}>
+                  <div style={{
+                    position: 'absolute',
+                    left: '1px',
+                    top: '1px',
+                    bottom: '1px',
+                    width: `${batteryLevel}%`,
+                    background: isLowBattery ? '#cc0000' : '#00cc44',
+                    borderRadius: '1px'
+                  }} />
+                </div>
+                <div style={{ 
+                  fontSize: '11px', 
+                  color: isLowBattery ? '#cc0000' : '#555',
+                  letterSpacing: '2px',
+                  textTransform: 'uppercase'
+                }}>
+                  {Math.round(batteryLevel)}%
+                </div>
+              </div>
+            )}
+            <button
+              onClick={() => setShowEmergencyContacts(!showEmergencyContacts)}
+              style={{ padding: '8px 20px', background: '#001a00', border: '1px solid #00cc44', color: '#00cc44', fontFamily: 'Oswald, sans-serif', fontSize: '12px', letterSpacing: '3px', textTransform: 'uppercase', cursor: 'pointer', borderRadius: '3px' }}
+            >
+              📞 Emergency Contacts
+            </button>
+            <select
+              value={selectedLanguage}
+              onChange={e => setSelectedLanguage(e.target.value)}
+              style={{ padding: '8px 12px', background: '#111', border: '1px solid #222', color: '#fff', fontFamily: 'Oswald, sans-serif', fontSize: '12px', letterSpacing: '2px', textTransform: 'uppercase', cursor: 'pointer', borderRadius: '3px' }}
+            >
+              <option value="en">English</option>
+              <option value="hi">हिंदी</option>
+              <option value="kn">ಕನ್ನಡ</option>
+            </select>
+            <button
+              onClick={logout}
+              style={{ padding: '8px 20px', background: 'transparent', border: '1px solid #222', color: '#555', fontFamily: 'Oswald, sans-serif', fontSize: '12px', letterSpacing: '3px', textTransform: 'uppercase', cursor: 'pointer', borderRadius: '3px' }}
+            >
+              Logout
+            </button>
+          </div>
         </div>
 
         {error && <div style={S.error}>{error}</div>}
         {success && <div style={S.success}>{success}</div>}
+
+        {/* Emergency Contacts Modal */}
+        {showEmergencyContacts && (
+          <div style={{ 
+            position: 'fixed',
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            background: 'rgba(0,0,0,0.8)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 1000
+          }}>
+            <div style={{ 
+              background: '#0d0d0d', 
+              border: '1px solid #00cc44', 
+              borderRadius: '4px', 
+              padding: '24px', 
+              width: '90%',
+              maxWidth: '500px',
+              maxHeight: '80vh',
+              overflowY: 'auto'
+            }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+                <div style={{ fontSize: '16px', color: '#00cc44', letterSpacing: '3px', textTransform: 'uppercase', fontWeight: '600' }}>
+                  Emergency Contacts
+                </div>
+                <button
+                  onClick={() => setShowEmergencyContacts(false)}
+                  style={{ background: 'transparent', border: 'none', color: '#555', fontSize: '20px', cursor: 'pointer' }}
+                >
+                  ✕
+                </button>
+              </div>
+
+              {/* Add New Contact Form */}
+              <div style={{ marginBottom: '20px', paddingBottom: '20px', borderBottom: '1px solid #1c1c1c' }}>
+                <div style={{ fontSize: '11px', color: '#555', letterSpacing: '2px', textTransform: 'uppercase', marginBottom: '12px' }}>
+                  Add New Contact
+                </div>
+                <input
+                  style={{ ...S.input, marginBottom: '8px' }}
+                  placeholder="Name"
+                  value={newContact.name}
+                  onChange={e => setNewContact({...newContact, name: e.target.value})}
+                />
+                <input
+                  style={{ ...S.input, marginBottom: '8px' }}
+                  placeholder="Phone Number"
+                  value={newContact.phone}
+                  onChange={e => setNewContact({...newContact, phone: e.target.value})}
+                />
+                <input
+                  style={{ ...S.input, marginBottom: '12px' }}
+                  placeholder="Relationship (e.g., Parent, Spouse)"
+                  value={newContact.relationship}
+                  onChange={e => setNewContact({...newContact, relationship: e.target.value})}
+                />
+                <button
+                  onClick={addEmergencyContact}
+                  style={{ width: '100%', padding: '10px', background: '#00cc44', border: 'none', color: '#000', fontFamily: 'Oswald, sans-serif', fontSize: '12px', letterSpacing: '2px', textTransform: 'uppercase', cursor: 'pointer', borderRadius: '3px' }}
+                >
+                  Add Contact
+                </button>
+              </div>
+
+              {/* Existing Contacts */}
+              <div>
+                <div style={{ fontSize: '11px', color: '#555', letterSpacing: '2px', textTransform: 'uppercase', marginBottom: '12px' }}>
+                  Your Contacts
+                </div>
+                {user.emergencyContacts && user.emergencyContacts.length > 0 ? (
+                  user.emergencyContacts.map((contact, index) => (
+                    <div key={index} style={{ 
+                      background: '#111', 
+                      border: '1px solid #222', 
+                      borderRadius: '3px', 
+                      padding: '12px', 
+                      marginBottom: '8px',
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      alignItems: 'center'
+                    }}>
+                      <div>
+                        <div style={{ fontSize: '13px', color: '#fff', marginBottom: '4px' }}>
+                          {contact.name}
+                        </div>
+                        <div style={{ fontSize: '11px', color: '#666', marginBottom: '2px' }}>
+                          {contact.phone}
+                        </div>
+                        {contact.relationship && (
+                          <div style={{ fontSize: '10px', color: '#444' }}>
+                            {contact.relationship}
+                          </div>
+                        )}
+                      </div>
+                      <button
+                        onClick={() => removeEmergencyContact(index)}
+                        style={{ padding: '6px 12px', background: '#cc0000', border: 'none', color: '#fff', fontFamily: 'Oswald, sans-serif', fontSize: '10px', letterSpacing: '2px', textTransform: 'uppercase', cursor: 'pointer', borderRadius: '3px' }}
+                      >
+                        Remove
+                      </button>
+                    </div>
+                  ))
+                ) : (
+                  <div style={{ fontSize: '12px', color: '#444', textAlign: 'center', padding: '20px' }}>
+                    No emergency contacts added yet
+                  </div>
+                )}
+              </div>
+
+              <div style={{ marginTop: '20px', fontSize: '10px', color: '#333', textAlign: 'center' }}>
+                These contacts will be notified if no volunteers respond to your SOS
+              </div>
+            </div>
+          </div>
+        )}
 
         {!activeSOS ? (
           <>
@@ -396,28 +709,132 @@ function SOSDashboard() {
             </div>
 
             <div style={S.label}>Description (Optional)</div>
-            <textarea
-              style={{ ...S.input, height: '80px', resize: 'none' }}
-              placeholder="Briefly describe the emergency..."
-              value={description}
-              onChange={e => setDescription(e.target.value)}
-            />
+            <div style={{ display: 'flex', gap: '8px', marginBottom: '20px' }}>
+              <textarea
+                style={{ ...S.input, height: '80px', resize: 'none', flex: 1 }}
+                placeholder="Briefly describe the emergency..."
+                value={description}
+                onChange={e => setDescription(e.target.value)}
+              />
+              {voiceSupported && (
+                <button
+                  onClick={startVoiceRecording}
+                  disabled={isRecording}
+                  style={{
+                    width: '60px',
+                    height: '80px',
+                    background: isRecording ? '#cc0000' : '#111',
+                    border: isRecording ? '1px solid #cc0000' : '1px solid #222',
+                    color: isRecording ? '#fff' : '#555',
+                    fontFamily: 'Oswald, sans-serif',
+                    fontSize: '24px',
+                    cursor: 'pointer',
+                    borderRadius: '3px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center'
+                  }}
+                  title={isRecording ? 'Recording...' : 'Voice input'}
+                >
+                  {isRecording ? '⏹' : '🎤'}
+                </button>
+              )}
+            </div>
           </>
         ) : (
           <div>
-            <div style={{ background: '#110000', border: '1px solid #cc0000', borderRadius: '4px', padding: '20px', marginBottom: '20px' }}>
-              <div style={{ fontSize: '11px', color: '#cc0000', letterSpacing: '4px', textTransform: 'uppercase', marginBottom: '8px' }}>
-                ● Active SOS — {activeSOS.category.replace('_', ' ')}
+            <div style={{ 
+              background: activeSOS.status === 'pending' ? '#110000' : 
+                        activeSOS.status === 'accepted' ? '#001100' : 
+                        activeSOS.status === 'responding' ? '#001a33' : '#111',
+              border: activeSOS.status === 'pending' ? '1px solid #cc0000' : 
+                     activeSOS.status === 'accepted' ? '1px solid #00cc44' : 
+                     activeSOS.status === 'responding' ? '1px solid #0088ff' : '1px solid #444',
+              borderRadius: '4px', 
+              padding: '20px', 
+              marginBottom: '20px',
+              animation: 'pulse 2s infinite'
+            }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+                <div style={{ fontSize: '11px', color: activeSOS.status === 'pending' ? '#cc0000' : 
+                                            activeSOS.status === 'accepted' ? '#00cc44' : 
+                                            activeSOS.status === 'responding' ? '#0088ff' : '#888', 
+                              letterSpacing: '4px', textTransform: 'uppercase' }}>
+                  ● Active SOS — {activeSOS.category.replace('_', ' ')}
+                </div>
+                <div style={{ 
+                  padding: '4px 12px', 
+                  borderRadius: '12px', 
+                  fontSize: '10px', 
+                  letterSpacing: '2px', 
+                  textTransform: 'uppercase',
+                  background: activeSOS.status === 'pending' ? 'rgba(204,0,0,0.2)' : 
+                             activeSOS.status === 'accepted' ? 'rgba(0,204,68,0.2)' : 
+                             activeSOS.status === 'responding' ? 'rgba(0,136,255,0.2)' : 'rgba(68,68,68,0.2)',
+                  color: activeSOS.status === 'pending' ? '#cc0000' : 
+                         activeSOS.status === 'accepted' ? '#00cc44' : 
+                         activeSOS.status === 'responding' ? '#0088ff' : '#888'
+                }}>
+                  {activeSOS.status}
+                </div>
               </div>
               <div style={{ fontSize: '13px', color: '#555', letterSpacing: '2px', textTransform: 'uppercase', marginBottom: '16px' }}>
-                Status: {activeSOS.status}
+                {activeSOS.status === 'pending' && 'Searching for nearby volunteers...'}
+                {activeSOS.status === 'accepted' && 'Volunteer on the way!'}
+                {activeSOS.status === 'responding' && 'Volunteer responding to your location'}
               </div>
+              <button
+                onClick={async () => {
+                  const emergencyNumber = await getEmergencyNumber()
+                  window.location.href = `tel:${emergencyNumber}`
+                  await callEmergencyServices()
+                }}
+                style={{ width: '100%', padding: '12px', background: '#cc0000', border: 'none', color: '#fff', fontFamily: 'Oswald, sans-serif', fontSize: '12px', letterSpacing: '3px', textTransform: 'uppercase', cursor: 'pointer', borderRadius: '3px', marginBottom: '8px' }}
+              >
+                📞 Call Emergency Services
+              </button>
               <button
                 onClick={cancelSOS}
                 style={{ width: '100%', padding: '12px', background: 'transparent', border: '1px solid #444', color: '#888', fontFamily: 'Oswald, sans-serif', fontSize: '12px', letterSpacing: '3px', textTransform: 'uppercase', cursor: 'pointer', borderRadius: '3px' }}
               >
                 Cancel SOS
               </button>
+
+              {/* Nearby Hospitals */}
+              {nearbyHospitals.length > 0 && (
+                <div style={{ marginTop: '20px' }}>
+                  <div style={{ fontSize: '11px', color: '#00cccc', letterSpacing: '4px', textTransform: 'uppercase', marginBottom: '12px' }}>
+                    🏥 Nearby Hospitals
+                  </div>
+                  {nearbyHospitals.slice(0, 3).map((hospital, i) => (
+                    <div key={i} style={{ 
+                      background: '#001a1a', 
+                      border: '1px solid #00cccc', 
+                      borderRadius: '4px', 
+                      padding: '12px', 
+                      marginBottom: '8px' 
+                    }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
+                        <div style={{ fontSize: '13px', color: '#fff', letterSpacing: '1px', fontWeight: '600' }}>
+                          {hospital.name}
+                        </div>
+                        <div style={{ fontSize: '11px', color: '#00cccc', letterSpacing: '2px' }}>
+                          {hospital.distance} km
+                        </div>
+                      </div>
+                      <div style={{ fontSize: '11px', color: '#666', letterSpacing: '1px', marginBottom: '8px' }}>
+                        {hospital.address}
+                      </div>
+                      <button
+                        onClick={() => window.open(`https://www.google.com/maps/dir/?api=1&destination=${hospital.lat},${hospital.lng}`, '_blank')}
+                        style={{ width: '100%', padding: '8px', background: '#00cccc', border: 'none', color: '#000', fontFamily: 'Oswald, sans-serif', fontSize: '11px', letterSpacing: '2px', textTransform: 'uppercase', cursor: 'pointer', borderRadius: '3px' }}
+                      >
+                        Navigate
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
 
             <div style={{ marginBottom: '20px' }}>
@@ -433,6 +850,7 @@ function SOSDashboard() {
             <AIAssistant
               category={activeSOS.category}
               description={activeSOS.description}
+              language={selectedLanguage}
             />
 
             {activeSOS.assignedVolunteer && (

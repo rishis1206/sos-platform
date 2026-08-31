@@ -64,8 +64,14 @@ function LoginForm() {
     setLoading(true)
     setError('')
     try {
-      const res = await api.post('/auth/send-otp', { phone })
-      setSuccess(`OTP sent! ${res.data.otp ? `(Dev mode OTP: ${res.data.otp})` : ''}`)
+      const res = await api.post('/auth/send-otp', { phone, role: 'volunteer' })
+      if (res.data.isExistingUser && res.data.token) {
+        setSuccess(`Welcome back, ${res.data.user.name}! Direct login successful.`)
+        login(res.data.user, res.data.token)
+        return
+      }
+      setSuccess('OTP sent successfully for registration!')
+      setIsNewUser(true)
       setStep('otp')
     } catch (err) {
       setError(err.response?.data?.message || 'Failed to send OTP')
@@ -199,22 +205,14 @@ function VolunteerDashboard() {
   const [volunteerLocation, setVolunteerLocation] = useState(null)
 
   useEffect(() => {
-    navigator.geolocation.getCurrentPosition(pos => {
-      const lat = pos.coords.latitude
-      const lng = pos.coords.longitude
-      setVolunteerLocation({ lat, lng })
-      api.put('/volunteers/location', { latitude: lat, longitude: lng }).catch(() => {})
-
-      api.get(`/sos?latitude=${lat}&longitude=${lng}`)
-        .then(res => setSosRequests(res.data.requests || []))
-        .catch(() => {})
-    }, (err) => {
-      console.error('Location error:', err)
-    }, GEO_OPTIONS)
-
+    // 1. Fetch pending SOS requests & active SOS immediately on mount
     api.get('/sos')
       .then(res => {
-        const accepted = res.data.requests?.find(r =>
+        console.log('Volunteer fetched all SOS:', res.data)
+        const requests = res.data.requests || []
+        setSosRequests(requests.filter(r => r.status === 'pending'))
+
+        const accepted = requests.find(r =>
           r.status === 'accepted' || r.status === 'responding'
         )
         if (accepted) {
@@ -228,11 +226,28 @@ function VolunteerDashboard() {
           }
         }
       })
-      .catch(() => {})
+      .catch(err => console.error('Error fetching volunteer SOS:', err))
 
     api.get('/sos/history')
-      .then(res => setHistory(res.data.history || []))
-      .catch(() => {})
+      .then(res => {
+        if (res.data.history) setHistory(res.data.history)
+      })
+      .catch(err => console.error('Error fetching volunteer history:', err))
+
+    // 2. Geolocation with fallback default coordinates
+    if (navigator.geolocation) {
+      navigator.geolocation.getCurrentPosition(pos => {
+        const lat = pos.coords.latitude
+        const lng = pos.coords.longitude
+        setVolunteerLocation({ lat, lng })
+        api.put('/volunteers/location', { latitude: lat, longitude: lng }).catch(() => {})
+      }, (err) => {
+        console.warn('Geolocation warning, using fallback:', err.message)
+        setVolunteerLocation({ lat: 14.4673, lng: 75.9218 })
+      }, { enableHighAccuracy: false, timeout: 5000, maximumAge: 30000 })
+    } else {
+      setVolunteerLocation({ lat: 14.4673, lng: 75.9218 })
+    }
 
     const tracker = setInterval(() => {
       navigator.geolocation.getCurrentPosition(pos => {
@@ -329,10 +344,15 @@ function VolunteerDashboard() {
   }
 
   const refreshRequests = () => {
-    if (!volunteerLocation) return
-    api.get(`/sos?latitude=${volunteerLocation.lat}&longitude=${volunteerLocation.lng}`)
-      .then(res => setSosRequests(res.data.requests || []))
-      .catch(() => {})
+    setLoading(true)
+    api.get('/sos')
+      .then(res => {
+        const requests = res.data.requests || []
+        setSosRequests(requests.filter(r => r.status === 'pending'))
+        setSuccess('Refreshed SOS requests')
+      })
+      .catch(err => setError(err.response?.data?.message || 'Failed to refresh'))
+      .finally(() => setLoading(false))
   }
 
   const getCategoryColor = (severity) => {

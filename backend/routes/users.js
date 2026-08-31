@@ -15,6 +15,7 @@ router.get('/profile', protect, async (req, res) => {
       location: req.user.location,
       isAvailable: req.user.isAvailable,
       rescueCount: req.user.rescueCount,
+      emergencyContacts: req.user.emergencyContacts,
       createdAt: req.user.createdAt
     }
   });
@@ -23,10 +24,47 @@ router.get('/profile', protect, async (req, res) => {
 // PUT /api/users/profile
 router.put('/profile', protect, async (req, res, next) => {
   try {
-    const { name } = req.body;
+    const { name, emergencyContacts } = req.body;
     if (name) req.user.name = name;
+    if (emergencyContacts) req.user.emergencyContacts = emergencyContacts;
     await req.user.save();
     res.json({ success: true, message: 'Profile updated', user: req.user });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// POST /api/users/emergency-contacts
+router.post('/emergency-contacts', protect, async (req, res, next) => {
+  try {
+    const { name, phone, relationship } = req.body;
+    
+    if (!name || !phone) {
+      return res.status(400).json({ success: false, message: 'Name and phone are required' });
+    }
+
+    req.user.emergencyContacts.push({ name, phone, relationship });
+    await req.user.save();
+    
+    res.json({ success: true, message: 'Emergency contact added', emergencyContacts: req.user.emergencyContacts });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// DELETE /api/users/emergency-contacts/:index
+router.delete('/emergency-contacts/:index', protect, async (req, res, next) => {
+  try {
+    const { index } = req.params;
+    
+    if (index < 0 || index >= req.user.emergencyContacts.length) {
+      return res.status(400).json({ success: false, message: 'Invalid contact index' });
+    }
+
+    req.user.emergencyContacts.splice(index, 1);
+    await req.user.save();
+    
+    res.json({ success: true, message: 'Emergency contact removed', emergencyContacts: req.user.emergencyContacts });
   } catch (error) {
     next(error);
   }
