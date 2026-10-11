@@ -392,7 +392,7 @@ router.put('/:id/complete', protect, restrictTo('volunteer'), async (req, res, n
 })
 
 // PUT /api/sos/:id/cancel
-router.put('/:id/cancel', protect, restrictTo('victim'), async (req, res, next) => {
+router.put('/:id/cancel', protect, restrictTo('victim', 'volunteer'), async (req, res, next) => {
   try {
     console.log(`Cancel SOS request: ID=${req.params.id}, userId=${req.user._id}`)
     const sos = await SOSRequest.findById(req.params.id)
@@ -432,7 +432,7 @@ router.put('/:id/cancel', protect, restrictTo('victim'), async (req, res, next) 
 })
 
 // POST /api/sos/:id/emergency-call - Log emergency services call
-router.post('/:id/emergency-call', protect, restrictTo('victim'), async (req, res, next) => {
+router.post('/:id/emergency-call', protect, restrictTo('victim', 'volunteer'), async (req, res, next) => {
   try {
     const sos = await SOSRequest.findById(req.params.id)
 
