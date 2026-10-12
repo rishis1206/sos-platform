@@ -63,10 +63,30 @@ router.post('/send-otp', async (req, res, next) => {
 
     console.log(`[AUTH] 🔑 OTP generated for 1st-time registration (${cleanPhone}): ${otp}`);
 
+    // Attempt Twilio SMS delivery if credentials are provided
+    if (process.env.TWILIO_ACCOUNT_SID && !process.env.TWILIO_ACCOUNT_SID.includes('paste') &&
+        process.env.TWILIO_AUTH_TOKEN && !process.env.TWILIO_AUTH_TOKEN.includes('paste') &&
+        process.env.TWILIO_PHONE_NUMBER && !process.env.TWILIO_PHONE_NUMBER.includes('paste')) {
+      try {
+        const twilio = require('twilio');
+        const client = twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
+        const toPhone = cleanPhone.startsWith('+') ? cleanPhone : `+91${cleanPhone}`;
+        await client.messages.create({
+          body: `[GeoSOS] Your emergency platform verification code is: ${otp}`,
+          from: process.env.TWILIO_PHONE_NUMBER,
+          to: toPhone
+        });
+        console.log(`[AUTH] 📱 Twilio SMS dispatched successfully to ${toPhone}`);
+      } catch (twErr) {
+        console.warn(`[AUTH] ⚠️ Twilio SMS delivery notice: ${twErr.message}`);
+      }
+    }
+
     res.json({
       success: true,
       isExistingUser: false,
-      message: 'OTP sent successfully for registration'
+      message: `OTP sent successfully (${otp})`,
+      otp: otp
     });
   } catch (error) {
     console.error('[AUTH] ❌ Error in send-otp:', error);

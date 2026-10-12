@@ -70,7 +70,12 @@ function LoginForm() {
         login(res.data.user, res.data.token)
         return
       }
-      setSuccess('OTP sent successfully for registration!')
+      if (res.data.otp) {
+        setOtp(res.data.otp)
+        setSuccess(`Registration OTP: ${res.data.otp}`)
+      } else {
+        setSuccess('OTP sent successfully for registration!')
+      }
       setIsNewUser(true)
       setStep('otp')
     } catch (err) {
@@ -310,61 +315,67 @@ function SOSDashboard() {
     if (!category) return setError('Select an emergency category first')
     setLoading(true)
     setError('')
-    try {
-      navigator.geolocation.getCurrentPosition(async (pos) => {
-        const lat = pos.coords.latitude
-        const lng = pos.coords.longitude
-        setVictimLocation({ lat, lng })
-        try {
-          const res = await api.post('/sos', {
-            category,
-            description,
-            latitude: lat,
-            longitude: lng,
-          })
-          setActiveSOS(res.data.sos)
-          setSuccess('SOS triggered! Searching for nearby volunteers...')
 
-          api.get('/sos/history')
-            .then(res => setHistory(res.data.history || []))
-            .catch(() => {})
+    const postSOS = async (lat, lng) => {
+      setVictimLocation({ lat, lng })
+      try {
+        const res = await api.post('/sos', {
+          category,
+          description,
+          latitude: lat,
+          longitude: lng,
+        })
+        setActiveSOS(res.data.sos)
+        setSuccess('SOS triggered! Searching for nearby volunteers...')
 
-          if (socket) socket.emit('join_sos_room', res.data.sos._id)
+        api.get('/sos/history')
+          .then(res => setHistory(res.data.history || []))
+          .catch(() => {})
 
-          // Adjust tracking interval based on battery level
-          const trackingInterval = isLowBattery ? 30000 : 10000 // 30s if low battery, 10s normal
-          
-          const tracker = setInterval(() => {
-            navigator.geolocation.getCurrentPosition(p => {
-              const newLat = p.coords.latitude
-              const newLng = p.coords.longitude
-              setVictimLocation({ lat: newLat, lng: newLng })
-              api.put('/users/location', {
-                latitude: newLat,
-                longitude: newLng
-              }).catch(() => {})
-              if (socket) socket.emit('update_location', {
-                latitude: newLat,
-                longitude: newLng,
-                sosId: res.data.sos._id
-              })
-            }, (err) => console.error('Location error:', err), GEO_OPTIONS)
-          }, trackingInterval)
+        if (socket) socket.emit('join_sos_room', res.data.sos._id)
 
-          window._sosTracker = tracker
+        // Adjust tracking interval based on battery level
+        const trackingInterval = isLowBattery ? 30000 : 10000 // 30s if low battery, 10s normal
+        
+        const tracker = setInterval(() => {
+          navigator.geolocation.getCurrentPosition(p => {
+            const newLat = p.coords.latitude
+            const newLng = p.coords.longitude
+            setVictimLocation({ lat: newLat, lng: newLng })
+            api.put('/users/location', {
+              latitude: newLat,
+              longitude: newLng
+            }).catch(() => {})
+            if (socket) socket.emit('update_location', {
+              latitude: newLat,
+              longitude: newLng,
+              sosId: res.data.sos._id
+            })
+          }, (err) => console.error('Location error:', err), GEO_OPTIONS)
+        }, trackingInterval)
 
-        } catch (err) {
-          setError(err.response?.data?.message || 'Failed to trigger SOS')
-        } finally {
-          setLoading(false)
-        }
-      }, () => {
-        setError('Location access denied. Please enable GPS.')
+        window._sosTracker = tracker
+
+      } catch (err) {
+        setError(err.response?.data?.message || 'Failed to trigger SOS')
+      } finally {
         setLoading(false)
-      }, GEO_OPTIONS)
-    } catch {
-      setError('Failed to get location')
-      setLoading(false)
+      }
+    }
+
+    if (navigator.geolocation) {
+      navigator.geolocation.getCurrentPosition(
+        (pos) => {
+          postSOS(pos.coords.latitude, pos.coords.longitude)
+        },
+        (err) => {
+          console.warn('Geolocation failed or denied, using fallback coordinates:', err)
+          postSOS(14.4673, 75.9218)
+        },
+        GEO_OPTIONS
+      )
+    } else {
+      postSOS(14.4673, 75.9218)
     }
   }
 

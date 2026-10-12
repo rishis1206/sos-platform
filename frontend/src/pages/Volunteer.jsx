@@ -70,7 +70,12 @@ function LoginForm() {
         login(res.data.user, res.data.token)
         return
       }
-      setSuccess('OTP sent successfully for registration!')
+      if (res.data.otp) {
+        setOtp(res.data.otp)
+        setSuccess(`Registration OTP: ${res.data.otp}`)
+      } else {
+        setSuccess('OTP sent successfully for registration!')
+      }
       setIsNewUser(true)
       setStep('otp')
     } catch (err) {
@@ -212,9 +217,11 @@ function VolunteerDashboard() {
         const requests = res.data.requests || []
         setSosRequests(requests.filter(r => r.status === 'pending'))
 
-        const accepted = requests.find(r =>
-          r.status === 'accepted' || r.status === 'responding'
-        )
+        const myId = String(user?._id || user?.id || '')
+        const accepted = requests.find(r => {
+          const assignedId = String(r.assignedVolunteer?._id || r.assignedVolunteer || '')
+          return (r.status === 'accepted' || r.status === 'responding') && assignedId === myId
+        })
         if (accepted) {
           setActiveSOS(accepted)
           if (socket) socket.emit('join_sos_room', accepted._id)
@@ -224,6 +231,8 @@ function VolunteerDashboard() {
               lng: accepted.victimId.location.coordinates[0]
             })
           }
+        } else {
+          setActiveSOS(null)
         }
       })
       .catch(err => console.error('Error fetching volunteer SOS:', err))
@@ -349,6 +358,25 @@ function VolunteerDashboard() {
       .then(res => {
         const requests = res.data.requests || []
         setSosRequests(requests.filter(r => r.status === 'pending'))
+
+        const myId = String(user?._id || user?.id || '')
+        const accepted = requests.find(r => {
+          const assignedId = String(r.assignedVolunteer?._id || r.assignedVolunteer || '')
+          return (r.status === 'accepted' || r.status === 'responding') && assignedId === myId
+        })
+        if (accepted) {
+          setActiveSOS(accepted)
+          if (socket) socket.emit('join_sos_room', accepted._id)
+          if (accepted.victimId?.location?.coordinates) {
+            setVictimLocation({
+              lat: accepted.victimId.location.coordinates[1],
+              lng: accepted.victimId.location.coordinates[0]
+            })
+          }
+        } else {
+          setActiveSOS(null)
+          setVictimLocation(null)
+        }
         setSuccess('Refreshed SOS requests')
       })
       .catch(err => setError(err.response?.data?.message || 'Failed to refresh'))
